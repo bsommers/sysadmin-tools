@@ -122,6 +122,146 @@ class TestParsersAndHelpers(unittest.TestCase):
             self.assertEqual(lines[0], '{"a":1,"b":2}')
             self.assertEqual(json.loads(lines[1]), {"c": 3, "z": 9})
 
+    def test_parse_cgroup_text_v2_v1_and_containers(self) -> None:
+        self.assertEqual(
+            si.parse_cgroup_text("0::/system.slice/docker-0123456789abcdef0123456789abcdef.scope\n"),
+            "docker:0123456789ab",
+        )
+        self.assertEqual(
+            si.parse_cgroup_text("12:memory:/docker/abcdef1234567890abcdef1234567890\n11:cpuset:/\n"),
+            "docker:abcdef123456",
+        )
+        self.assertEqual(
+            si.parse_cgroup_text("0::/user.slice/user-1000.slice/libpod-deadbeef1234567890.scope\n"),
+            "podman:deadbeef1234",
+        )
+        self.assertEqual(
+            si.parse_cgroup_text("0::/kubepods.slice/cri-containerd-99887766554433221100.scope\n"),
+            "containerd:998877665544",
+        )
+        self.assertEqual(
+            si.parse_cgroup_text("0::/system.slice/postgresql@16-main.service\n"),
+            "systemd:postgresql@16-main.service",
+        )
+        long_scope = (
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/"
+            "ptyxis-spawn-0238cfe1-32a9-4f20-917c-5f536bd2202c.scope\n"
+        )
+        parsed_long = si.parse_cgroup_text(long_scope)
+        self.assertTrue(parsed_long.startswith("systemd:ptyxis-spawn-"))
+        self.assertLessEqual(len(parsed_long), 40)
+
+        v1_systemd = "12:cpuset:/\n11:pids:/system.slice/nginx.service\n1:name=systemd:/system.slice/nginx.service\n"
+        self.assertEqual(si.parse_cgroup_text(v1_systemd), "systemd:nginx.service")
+        self.assertEqual(si.parse_cgroup_text("0::/\n"), "/")
+        self.assertEqual(si.parse_cgroup_text("12:cpuset:/\n1:name=systemd:/\n"), "/")
+        self.assertEqual(si.parse_cgroup_text(""), "-")
+        self.assertEqual(si.parse_cgroup_text("   \n"), "-")
+
+    def test_read_proc_cgroup_synthetic(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            pdir = Path(td) / "1234"
+            pdir.mkdir()
+            (pdir / "cgroup").write_text("0::/system.slice/sshd.service\n", encoding="utf-8")
+            self.assertEqual(si.read_proc_cgroup(1234, proc_root=td), "systemd:sshd.service")
+            self.assertEqual(si.read_proc_cgroup(999999, proc_root=td), "-")
+
+    def test_read_nvme_health_and_thermal_zones_synthetic(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            nvme_root = Path(td) / "nvme"
+            # nvme0: OK with 2 sensors
+            n0 = nvme_root / "nvme0" / "hwmon0"
+            n0.mkdir(parents=True)
+            (nvme_root / "nvme0" / "model").write_text("Samsung 980 PRO   \n", encoding="utf-8")
+            (nvme_root / "nvme0" / "state").write_text("live\n", encoding="utf-8")
+            (n0 / "temp1_input").write_text("35850\n", encoding="utf-8")
+            (n0 / "temp1_max").write_text("70000\n", encoding="utf-8")
+            (n0 / "temp1_crit").write_text("85000\n", encoding="utf-8")
+            (n0 / "temp1_alarm").write_text("0\n", encoding="utf-8")
+            (n0 / "temp1_label").write_text("Composite\n", encoding="utf-8")
+            (n0 / "temp2_input").write_text("41200\n", encoding="utf-8")
+            (n0 / "temp2_label").write_text("Sensor 1\n", encoding="utf-8")
+
+            # nvme1: WARM (>= temp_max_c)
+            n1 = nvme_root / "nvme1" / "hwmon1"
+            n1.mkdir(parents=True)
+            (nvme_root / "nvme1" / "model").write_text("WD Black SN850X\n", encoding="utf-8")
+            (nvme_root / "nvme1" / "state").write_text("live\n", encoding="utf-8")
+            (n1 / "temp1_input").write_text("72500\n", encoding="utf-8")
+            (n1 / "temp1_max").write_text("70000\n", encoding="utf-8")
+            (n1 / "temp1_crit").write_text("85000\n", encoding="utf-8")
+            (n1 / "temp1_alarm").write_text("0\n", encoding="utf-8")
+            (n1 / "temp1_label").write_text("Composite\n", encoding="utf-8")
+
+            # nvme2: CRITICAL via alarm=1
+            n2 = nvme_root / "nvme2" / "hwmon2"
+            n2.mkdir(parents=True)
+            (nvme_root / "nvme2" / "model").write_text("SPCC SSD\n", encoding="utf-8")
+            (nvme_root / "nvme2" / "state").write_text("live\n", encoding="utf-8")
+            (n2 / "temp1_input").write_text("60000\n", encoding="utf-8")
+            (n2 / "temp1_crit").write_text("90000\n", encoding="utf-8")
+            (n2 / "temp1_alarm").write_text("1\n", encoding="utf-8")
+
+            # nvme3: CRITICAL via non-live state
+            n3 = nvme_root / "nvme3"
+            n3.mkdir(parents=True)
+            (n3 / "model").write_text("Faulty NVMe\n", encoding="utf-8")
+            (n3 / "state").write_text("resetting\n", encoding="utf-8")
+
+            res = si.read_nvme_health(str(nvme_root))
+            self.assertEqual([r["controller"] for r in res], ["nvme0", "nvme1", "nvme2", "nvme3"])
+            self.assertEqual(res[0]["model"], "Samsung 980 PRO")
+            self.assertEqual(res[0]["temp_c"], 35.9)
+            self.assertEqual(res[0]["thermal_status"], "OK")
+            self.assertEqual(len(res[0]["sensors"]), 2)
+            self.assertEqual(res[1]["thermal_status"], "WARM")
+            self.assertEqual(res[2]["thermal_status"], "CRITICAL")
+            self.assertTrue(res[2]["alarm"])
+            self.assertEqual(res[3]["thermal_status"], "CRITICAL")
+            self.assertEqual(res[3]["state"], "resetting")
+
+            self.assertEqual(si.read_nvme_health(str(Path(td) / "missing")), [])
+
+            # Thermal zones
+            tz_root = Path(td) / "thermal"
+            z0 = tz_root / "thermal_zone0"
+            z1 = tz_root / "thermal_zone1"
+            z0.mkdir(parents=True)
+            z1.mkdir(parents=True)
+            (z0 / "type").write_text("x86_pkg_temp\n", encoding="utf-8")
+            (z0 / "temp").write_text("48500\n", encoding="utf-8")
+            (z1 / "type").write_text("acpitz\n", encoding="utf-8")
+            (z1 / "temp").write_text("not_a_number\n", encoding="utf-8")
+            zones = si.read_thermal_zones(str(tz_root))
+            self.assertEqual(zones, [{"zone": "thermal_zone0", "type": "x86_pkg_temp", "temp_c": 48.5}])
+            self.assertEqual(si.read_thermal_zones(str(Path(td) / "missing_tz")), [])
+
+    def test_inspect_pid_threads_synthetic(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            troot = Path(td) / "500" / "task"
+            fields_r = ["R", "1"] + ["0"] * 18
+            fields_d = ["D", "1"] + ["0"] * 18
+            fields_s = ["S", "1"] + ["0"] * 18
+            for tid, comm, fields, wchan in (
+                ("500", "main", fields_s, "ep_poll"),
+                ("501", "worker-1", fields_r, "0"),
+                ("502", "writer-1", fields_d, "balance_dirty_pages"),
+                ("503", "writer-2", fields_d, "balance_dirty_pages"),
+            ):
+                d = troot / tid
+                d.mkdir(parents=True)
+                (d / "stat").write_text(f"{tid} ({comm}) {' '.join(fields)}\n", encoding="utf-8")
+                (d / "wchan").write_text(wchan, encoding="utf-8")
+
+            summary = si.inspect_pid_threads(500, proc_root=td)
+            self.assertEqual(summary["total_threads"], 4)
+            self.assertEqual(summary["r_threads"], 1)
+            self.assertEqual(summary["d_threads"], 2)
+            self.assertEqual(summary["s_threads"], 1)
+            self.assertEqual(summary["d_wchans"], {"balance_dirty_pages": 2})
+            self.assertEqual(len(summary["blocked_threads"]), 2)
+            self.assertEqual(summary["blocked_threads"][0]["tid"], 502)
+
 
 class TestClassifier(unittest.TestCase):
     def test_io_thrashing_verdict(self) -> None:
@@ -266,6 +406,197 @@ class TestClassifier(unittest.TestCase):
         self.assertTrue(verdict["is_issue"])
         self.assertNotIn("No immediate intervention needed.", verdict["recommendations"])
 
+    def test_nvme_thermal_warnings_in_classify_verdict(self) -> None:
+        base_kwargs = dict(
+            cpu={"us": 3.0, "sy": 1.0, "ni": 0.0, "id": 95.5, "wa": 0.5, "hi": 0.0, "si": 0.0, "st": 0.0},
+            load={"load1": 0.8, "load5": 0.6, "load15": 0.5, "cpus": 32},
+            psi={"cpu": {"some": {"avg10": 0.0}}, "io": {"some": {"avg10": 0.0}}, "memory": {"some": {"avg10": 0.0}}},
+            mem={"dirty_gib": 0.01, "mem_avail_gib": 100.0, "swap_used_pct": 0.0},
+            swap_delta=(0, 0),
+            disks=[],
+            d_state_total=0,
+            d_wchan_counts=Counter(),
+            top_cpu=[],
+            overlaps=[],
+            turnover={"started": 0, "exited": 0, "total_procs": 400},
+        )
+        warm = si.classify_verdict(
+            **base_kwargs,
+            nvme_health=[
+                {
+                    "controller": "nvme1",
+                    "model": "SSD",
+                    "state": "live",
+                    "temp_c": 73.5,
+                    "temp_max_c": 70.0,
+                    "temp_crit_c": 85.0,
+                    "alarm": False,
+                    "thermal_status": "WARM",
+                    "sensors": [],
+                }
+            ],
+        )
+        self.assertFalse(warm["is_issue"])
+        self.assertTrue(any("nvme1" in r and "73.5" in r for r in warm["reasons"]))
+        self.assertTrue(any("thermal" in r.lower() for r in warm["recommendations"]))
+
+        crit = si.classify_verdict(
+            **base_kwargs,
+            nvme_health=[
+                {
+                    "controller": "nvme2",
+                    "model": "SSD",
+                    "state": "live",
+                    "temp_c": 86.0,
+                    "temp_max_c": 70.0,
+                    "temp_crit_c": 85.0,
+                    "alarm": True,
+                    "thermal_status": "CRITICAL",
+                    "sensors": [],
+                }
+            ],
+        )
+        self.assertTrue(crit["is_issue"])
+        self.assertTrue(any("nvme2" in r and "critical" in r.lower() for r in crit["reasons"]))
+        self.assertTrue(any("nvme2" in r for r in crit["recommendations"]))
+
+
+class TestPidClassifierAndRender(unittest.TestCase):
+    def _base_target(self, **overrides: object) -> dict:
+        t = {
+            "pid": 1234,
+            "ppid": 1,
+            "comm": "worker",
+            "state": "S",
+            "elapsed_sec": 60,
+            "elapsed": "01m00s",
+            "cmdline": "worker --run",
+            "ancestry": "1234:worker(01m00s)",
+            "cgroup": "systemd:worker.service",
+            "mounts": ["/datanapps"],
+            "cpu_pct": 1.0,
+            "rss_mib": 128.0,
+            "swap_mib": 0.0,
+            "r_mbs": 0.0,
+            "w_mbs": 0.0,
+            "wchar_mbs": 0.0,
+            "oom_score": 10,
+        }
+        t.update(overrides)
+        return t
+
+    def _base_threads(self, **overrides: object) -> dict:
+        th = {
+            "total_threads": 2,
+            "r_threads": 0,
+            "d_threads": 0,
+            "s_threads": 2,
+            "d_wchans": {},
+            "blocked_threads": [],
+        }
+        th.update(overrides)
+        return th
+
+    def _base_subtree(self, **overrides: object) -> dict:
+        sub = {
+            "descendant_count": 0,
+            "subtree_cpu_pct": 1.0,
+            "subtree_rss_mib": 128.0,
+            "subtree_w_mbs": 0.0,
+            "subtree_r_mbs": 0.0,
+            "subtree_d_threads": 0,
+            "top_descendants": [],
+        }
+        sub.update(overrides)
+        return sub
+
+    def test_classify_pid_verdict_all_statuses(self) -> None:
+        v_blocked = si.classify_pid_verdict(
+            self._base_target(state="D"),
+            self._base_threads(d_threads=2, d_wchans={"balance_dirty_pages": 2}),
+            self._base_subtree(subtree_d_threads=2),
+        )
+        self.assertEqual(v_blocked["status"], "BLOCKED_ON_IO")
+        self.assertTrue(v_blocked["is_issue"])
+        self.assertTrue(any("balance_dirty_pages" in r for r in v_blocked["recommendations"]))
+
+        v_mem = si.classify_pid_verdict(
+            self._base_target(rss_mib=10240.0, swap_mib=600.0, oom_score=650),
+            self._base_threads(),
+            self._base_subtree(subtree_rss_mib=10240.0),
+            mem={"mem_total_gib": 32.0},
+        )
+        self.assertEqual(v_mem["status"], "MEMORY_HEAVY")
+        self.assertTrue(v_mem["is_issue"])
+
+        v_cpu = si.classify_pid_verdict(
+            self._base_target(cpu_pct=150.0, state="R"),
+            self._base_threads(r_threads=2),
+            self._base_subtree(subtree_cpu_pct=150.0),
+        )
+        self.assertEqual(v_cpu["status"], "CPU_BOUND")
+        self.assertFalse(v_cpu["is_issue"])
+
+        v_io = si.classify_pid_verdict(
+            self._base_target(w_mbs=25.0),
+            self._base_threads(),
+            self._base_subtree(subtree_w_mbs=25.0),
+        )
+        self.assertEqual(v_io["status"], "IO_ACTIVE")
+        self.assertFalse(v_io["is_issue"])
+
+        v_idle = si.classify_pid_verdict(
+            self._base_target(),
+            self._base_threads(),
+            self._base_subtree(),
+        )
+        self.assertEqual(v_idle["status"], "IDLE_OR_SLEEPING")
+        self.assertFalse(v_idle["is_issue"])
+
+    def test_render_pid_text_and_markdown(self) -> None:
+        rep = {
+            "mode": "pid",
+            "timestamp": "2026-11-21T21:00:00-05:00",
+            "sample_sec": 0.5,
+            "target": self._base_target(),
+            "threads": self._base_threads(
+                d_threads=1,
+                d_wchans={"rq_qos_wait": 1},
+                blocked_threads=[{"tid": 1235, "comm": "io-wr", "state": "D", "wchan": "rq_qos_wait"}],
+            ),
+            "subtree": self._base_subtree(
+                descendant_count=1,
+                top_descendants=[
+                    {
+                        "pid": 1299,
+                        "ppid": 1234,
+                        "comm": "child",
+                        "state": "S",
+                        "cpu_pct": 0.5,
+                        "rss_mib": 12.0,
+                        "r_mbs": 0.0,
+                        "w_mbs": 0.1,
+                        "d_threads": 0,
+                        "elapsed": "00m10s",
+                        "cmdline": "child --arg",
+                    }
+                ],
+            ),
+            "verdict": {
+                "status": "BLOCKED_ON_IO",
+                "is_issue": True,
+                "reasons": ["Blocked on disk"],
+                "recommendations": ["Check disk"],
+            },
+        }
+        txt = si.render_pid_text(rep, markdown=False)
+        self.assertIn("PID Investigation: 1234 (worker)", txt)
+        self.assertIn("=== Process Identity ===", txt)
+        self.assertIn("rq_qos_wait", txt)
+        md = si.render_pid_text(rep, markdown=True)
+        self.assertIn("# PID Investigation: 1234 (worker)", md)
+        self.assertIn("## Recommendations", md)
+
 
 class TestProgressComparison(unittest.TestCase):
     @staticmethod
@@ -317,7 +648,7 @@ class TestCLIValidation(unittest.TestCase):
     def test_help(self) -> None:
         r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, check=False)
         self.assertEqual(r.returncode, 0)
-        for flag in ("--interval", "--exit-on-issue", "--progress-check", "--no-statvfs", "--append-log"):
+        for flag in ("--interval", "--exit-on-issue", "--progress-check", "--no-statvfs", "--append-log", "--diagnose-pid"):
             self.assertIn(flag, r.stdout)
 
     def test_invalid_interval_fails_cleanly(self) -> None:
@@ -335,6 +666,18 @@ class TestCLIValidation(unittest.TestCase):
         r = subprocess.run([sys.executable, str(SCRIPT), "--watch", "-1"], capture_output=True, text=True, check=False)
         self.assertEqual(r.returncode, 1)
         self.assertIn("error:", r.stderr)
+
+    def test_invalid_and_missing_diagnose_pid_fails_cleanly(self) -> None:
+        for bad_pid in ("0", "-42", "99999999"):
+            r = subprocess.run(
+                [sys.executable, str(SCRIPT), "--diagnose-pid", bad_pid, "--interval", "0.2"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(r.returncode, 1, msg=f"bad_pid={bad_pid} stderr={r.stderr}")
+            self.assertIn("error:", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ Examples:
   sys-investigate --progress-check --interval 2
   sys-investigate --append-log /var/tmp/sys-investigate.jsonl --no-statvfs
   sys-investigate --exit-on-issue --json > /tmp/diag.json
+  sys-investigate --diagnose-pid 12345 --interval 2
 """
 
 from __future__ import annotations
@@ -433,6 +434,243 @@ def read_gpu_busy() -> list[dict[str, Any]]:
     return gpus
 
 
+def _read_sysfs_int(path: str | Path) -> int | None:
+    txt = read_text(path)
+    if txt is None:
+        return None
+    s = txt.strip()
+    if not s:
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
+
+def _natural_suffix_key(name: str, prefix: str) -> tuple[int, int | str, str]:
+    suffix = name[len(prefix) :] if name.startswith(prefix) else name
+    if suffix.isdigit():
+        return (0, int(suffix), name)
+    return (1, suffix, name)
+
+
+def read_nvme_health(sys_nvme_root: str = "/sys/class/nvme") -> list[dict[str, Any]]:
+    """Read NVMe controller state and hwmon thermal sensors directly from /sys."""
+    root = Path(sys_nvme_root)
+    if not root.exists():
+        return []
+    try:
+        entries = [
+            p
+            for p in root.iterdir()
+            if p.name.startswith("nvme") and "n" not in p.name[4:] and p.is_dir()
+        ]
+    except OSError:
+        return []
+
+    entries.sort(key=lambda p: _natural_suffix_key(p.name, "nvme"))
+    results: list[dict[str, Any]] = []
+    for ctrl_dir in entries:
+        model = (read_text(ctrl_dir / "model") or "").strip()
+        state = (read_text(ctrl_dir / "state") or "unknown").strip() or "unknown"
+
+        sensors: list[dict[str, Any]] = []
+        try:
+            hwmons = sorted(
+                (p for p in ctrl_dir.iterdir() if p.name.startswith("hwmon") and p.is_dir()),
+                key=lambda p: _natural_suffix_key(p.name, "hwmon"),
+            )
+        except OSError:
+            hwmons = []
+
+        for hwmon in hwmons:
+            try:
+                hw_files = [p.name for p in hwmon.iterdir()]
+            except OSError:
+                continue
+            indices: list[int] = []
+            for fname in hw_files:
+                if fname.startswith("temp") and fname.endswith("_input"):
+                    mid = fname[4:-6]
+                    if mid.isdigit():
+                        indices.append(int(mid))
+            for idx in sorted(set(indices)):
+                raw_temp = _read_sysfs_int(hwmon / f"temp{idx}_input")
+                if raw_temp is None:
+                    continue
+                t_c = round(raw_temp / 1000.0, 1)
+                raw_max = _read_sysfs_int(hwmon / f"temp{idx}_max")
+                raw_crit = _read_sysfs_int(hwmon / f"temp{idx}_crit")
+                raw_alarm = _read_sysfs_int(hwmon / f"temp{idx}_alarm")
+                label = (read_text(hwmon / f"temp{idx}_label") or "").strip() or f"temp{idx}"
+                sensors.append(
+                    {
+                        "label": label,
+                        "temp_c": t_c,
+                        "max_c": round(raw_max / 1000.0, 1) if raw_max is not None else None,
+                        "crit_c": round(raw_crit / 1000.0, 1) if raw_crit is not None else None,
+                        "alarm": bool(raw_alarm != 0) if raw_alarm is not None else False,
+                    }
+                )
+
+        primary = next((s for s in sensors if s["label"].lower() == "composite"), None)
+        if primary is None and sensors:
+            primary = sensors[0]
+
+        temp_c = primary["temp_c"] if primary else None
+        temp_max_c = primary["max_c"] if primary else None
+        temp_crit_c = primary["crit_c"] if primary else None
+        alarm = any(s["alarm"] for s in sensors)
+
+        if (
+            alarm
+            or (temp_crit_c is not None and temp_c is not None and temp_c >= temp_crit_c)
+            or state != "live"
+        ):
+            thermal_status = "CRITICAL"
+        elif (
+            (temp_max_c is not None and temp_c is not None and temp_c >= temp_max_c)
+            or (temp_c is not None and temp_c >= 70.0)
+        ):
+            thermal_status = "WARM"
+        else:
+            thermal_status = "OK"
+
+        results.append(
+            {
+                "controller": ctrl_dir.name,
+                "model": model,
+                "state": state,
+                "temp_c": temp_c,
+                "temp_max_c": temp_max_c,
+                "temp_crit_c": temp_crit_c,
+                "alarm": alarm,
+                "thermal_status": thermal_status,
+                "sensors": sensors,
+            }
+        )
+    return results
+
+
+def read_thermal_zones(sys_thermal_root: str = "/sys/class/thermal") -> list[dict[str, Any]]:
+    """Read Linux thermal_zone* temperatures directly from /sys."""
+    root = Path(sys_thermal_root)
+    if not root.exists():
+        return []
+    try:
+        zones = [p for p in root.iterdir() if p.name.startswith("thermal_zone") and p.is_dir()]
+    except OSError:
+        return []
+
+    zones.sort(key=lambda p: _natural_suffix_key(p.name, "thermal_zone"))
+    out: list[dict[str, Any]] = []
+    for zdir in zones:
+        raw_temp = _read_sysfs_int(zdir / "temp")
+        if raw_temp is None:
+            continue
+        ztype = (read_text(zdir / "type") or "").strip() or zdir.name
+        out.append({"zone": zdir.name, "type": ztype, "temp_c": round(raw_temp / 1000.0, 1)})
+    return out
+
+
+def _truncate_label(label: str, max_len: int = 40) -> str:
+    if len(label) <= max_len:
+        return label
+    return label[: max_len - 3] + "..."
+
+
+def _classify_cgroup_path(path: str) -> str:
+    p = path.strip()
+    if not p:
+        return "-"
+    if p == "/":
+        return "/"
+    parts = [seg for seg in p.split("/") if seg]
+    if not parts:
+        return "/"
+
+    # 1. Container runtimes (check deepest-first for scope names and path segments).
+    for seg in reversed(parts):
+        if seg.startswith("docker-") and seg.endswith(".scope"):
+            cid = seg[len("docker-") : -len(".scope")]
+            if cid:
+                return f"docker:{cid[:12]}"
+        if seg.startswith("libpod-") and seg.endswith(".scope"):
+            cid = seg[len("libpod-") : -len(".scope")]
+            if cid:
+                return f"podman:{cid[:12]}"
+        if seg.startswith("cri-containerd-") and seg.endswith(".scope"):
+            cid = seg[len("cri-containerd-") : -len(".scope")]
+            if cid:
+                return f"containerd:{cid[:12]}"
+
+    for i, seg in enumerate(parts[:-1]):
+        nxt = parts[i + 1]
+        if seg == "docker" and nxt:
+            return f"docker:{nxt[:12]}"
+        if seg == "libpod" and nxt:
+            return f"podman:{nxt[:12]}"
+        if seg in ("cri-containerd", "containerd") and nxt:
+            return f"containerd:{nxt[:12]}"
+
+    # 2. Systemd service/scope unit (deepest match).
+    for seg in reversed(parts):
+        if seg.endswith((".service", ".scope")):
+            return _truncate_label(f"systemd:{seg}", 40)
+
+    # 3. Other non-root cgroup path.
+    return _truncate_label(p if len(p) <= 40 else parts[-1], 40)
+
+
+def parse_cgroup_text(txt: str) -> str:
+    """Parse /proc/<pid>/cgroup (v2 unified or v1 fallback) into a concise attribution label."""
+    if not txt or not txt.strip():
+        return "-"
+
+    v2_path: str | None = None
+    v1_entries: list[tuple[str, str]] = []
+    for raw_line in txt.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        hier, ctrl, path = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        if hier == "0" and ctrl == "":
+            v2_path = path
+        else:
+            v1_entries.append((ctrl, path))
+
+    if v2_path is not None and v2_path not in ("", "/"):
+        return _classify_cgroup_path(v2_path)
+
+    if v1_entries:
+        # Prefer container-specific paths, then name=systemd, then first non-root path.
+        non_root = [(c, p) for c, p in v1_entries if p and p != "/"]
+        if non_root:
+            for _, p in non_root:
+                lbl = _classify_cgroup_path(p)
+                if lbl.startswith(("docker:", "podman:", "containerd:")):
+                    return lbl
+            for c, p in non_root:
+                if "systemd" in c:
+                    return _classify_cgroup_path(p)
+            return _classify_cgroup_path(non_root[0][1])
+
+    if v2_path == "/" or any(p == "/" for _, p in v1_entries):
+        return "/"
+    return "-"
+
+
+def read_proc_cgroup(pid: int, proc_root: str = "/proc") -> str:
+    """Read and classify /proc/<pid>/cgroup; returns '-' when missing or unreadable."""
+    txt = read_text(f"{proc_root}/{pid}/cgroup")
+    if txt is None:
+        return "-"
+    return parse_cgroup_text(txt)
+
+
 def parse_proc_stat(stat_txt: str) -> tuple[str, str, int, int, int, int] | None:
     """Return (comm, state, ppid, utime, stime, starttime) from /proc/<pid>/stat."""
     lp = stat_txt.find("(")
@@ -472,7 +710,7 @@ class ProcSnap:
     r_threads: int
 
 
-def snapshot_procs(inspect_threads: bool = True) -> dict[int, ProcSnap]:
+def snapshot_procs(inspect_threads: bool = True, include_self: bool = False) -> dict[int, ProcSnap]:
     snaps: dict[int, ProcSnap] = {}
     my_pid = os.getpid()
     try:
@@ -484,7 +722,7 @@ def snapshot_procs(inspect_threads: bool = True) -> dict[int, ProcSnap]:
         if not name.isdigit():
             continue
         pid = int(name)
-        if pid == my_pid:
+        if not include_self and pid == my_pid:
             continue
         pdir = f"/proc/{pid}"
         st_txt = read_text(f"{pdir}/stat")
@@ -639,6 +877,7 @@ def classify_verdict(
     turnover: dict[str, int],
     top_io: list[dict[str, Any]] | None = None,
     d_state_top: list[dict[str, Any]] | None = None,
+    nvme_health: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     wa = cpu.get("wa", 0.0)
     busy_cpu = cpu.get("us", 0.0) + cpu.get("sy", 0.0) + cpu.get("ni", 0.0)
@@ -761,7 +1000,37 @@ def classify_verdict(
             productivity = "PRODUCTIVE_COMPUTE"
             reasons.append(f"CPU actively computing ({busy_cpu:.1f}% busy, iowait={wa:.1f}%, load1={load['load1']:.2f}).")
 
-    is_issue = productivity in ("THRASHING_LOW_EFFICIENCY", "WEDGED_OR_STALLED", "SUSPECT_SPIN_LOOP")
+    crit_nvme = [n for n in (nvme_health or []) if n.get("thermal_status") == "CRITICAL"]
+    warm_nvme = [n for n in (nvme_health or []) if n.get("thermal_status") == "WARM"]
+    if crit_nvme:
+        details = ", ".join(
+            f"{n['controller']}({n['temp_c']}°C, state={n['state']}, alarm={n['alarm']})"
+            if n.get("temp_c") is not None
+            else f"{n['controller']}(state={n['state']}, alarm={n['alarm']})"
+            for n in crit_nvme
+        )
+        reasons.append(f"NVMe critical thermal/health alert: {details}.")
+        ctrls = ", ".join(n["controller"] for n in crit_nvme)
+        recommendations.append(
+            f"Check NVMe cooling, airflow, and SMART/dmesg health immediately for critical controller(s): {ctrls}."
+        )
+    if warm_nvme:
+        details = ", ".join(
+            f"{n['controller']}({n['temp_c']}°C"
+            + (f"/max {n['temp_max_c']}°C" if n.get("temp_max_c") is not None else "")
+            + ")"
+            for n in warm_nvme
+        )
+        reasons.append(f"NVMe elevated temperature warning: {details}.")
+        ctrls = ", ".join(n["controller"] for n in warm_nvme)
+        recommendations.append(
+            f"Monitor NVMe thermals and airflow for warm controller(s) ({ctrls}) to prevent thermal throttling."
+        )
+
+    is_issue = (
+        productivity in ("THRASHING_LOW_EFFICIENCY", "WEDGED_OR_STALLED", "SUSPECT_SPIN_LOOP")
+        or bool(crit_nvme)
+    )
     if not recommendations:
         if is_issue:
             recommendations.append("Inspect top offending PIDs and wait channels above; throttle or restart stalled workloads.")
@@ -867,6 +1136,8 @@ def investigate(interval: float = 2.0, top_n: int = 10, no_statvfs: bool = False
     mount_map = map_disks_to_mounts(allow_statvfs=not no_statvfs)
     disks = compute_disk_deltas(disk0, disk1, dt_sec, mount_map)
     gpus = read_gpu_busy()
+    nvme_health = read_nvme_health()
+    thermal_zones = read_thermal_zones()
 
     all_mount_points = sorted({m["mount"] for mlist in mount_map.values() for m in mlist})
 
@@ -944,7 +1215,7 @@ def investigate(interval: float = 2.0, top_n: int = 10, no_statvfs: bool = False
     d_groups.sort(key=lambda x: (x["threads"], x["comm"], x["pid"]), reverse=True)
     d_state_top = d_groups[:top_n]
 
-    # Bounded mount attribution only for top I/O and D-state offenders (avoids scanning all PIDs).
+    # Bounded mount and cgroup attribution only for selected top rows (avoids scanning all PIDs).
     pid_mount_cache: dict[int, list[str]] = {}
     for row in d_state_top:
         pid = row["pid"]
@@ -956,6 +1227,13 @@ def investigate(interval: float = 2.0, top_n: int = 10, no_statvfs: bool = False
         if pid not in pid_mount_cache:
             pid_mount_cache[pid] = attribute_pid_mounts(pid, all_mount_points)
         row["mounts"] = pid_mount_cache[pid]
+
+    pid_cgroup_cache: dict[int, str] = {}
+    for row in (*top_cpu, *top_io, *d_state_top):
+        pid = row["pid"]
+        if pid not in pid_cgroup_cache:
+            pid_cgroup_cache[pid] = read_proc_cgroup(pid)
+        row["cgroup"] = pid_cgroup_cache[pid]
 
     overlaps = detect_overlapping_workloads(procs1, uptime)
     verdict = classify_verdict(
@@ -972,6 +1250,7 @@ def investigate(interval: float = 2.0, top_n: int = 10, no_statvfs: bool = False
         turnover=turnover,
         top_io=top_io,
         d_state_top=d_state_top,
+        nvme_health=nvme_health,
     )
 
     return {
@@ -985,12 +1264,394 @@ def investigate(interval: float = 2.0, top_n: int = 10, no_statvfs: bool = False
         "turnover": turnover,
         "disks": disks,
         "gpus": gpus,
+        "nvme_health": nvme_health,
+        "thermal_zones": thermal_zones,
         "d_state_wchans": dict(d_wchan_counts.most_common(10)),
         "d_state_top": d_state_top,
         "top_cpu": top_cpu,
         "top_io": top_io,
         "overlapping_workloads": overlaps[:top_n],
     }
+
+
+def read_pid_swap_mib(pid: int, proc_root: str = "/proc") -> float:
+    txt = read_text(f"{proc_root}/{pid}/status") or ""
+    for line in txt.splitlines():
+        if line.startswith("VmSwap:"):
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                return round(int(parts[1]) / 1024.0, 1)
+    return 0.0
+
+
+def read_pid_oom_score(pid: int, proc_root: str = "/proc") -> int | None:
+    return _read_sysfs_int(f"{proc_root}/{pid}/oom_score")
+
+
+def inspect_pid_threads(pid: int, proc_root: str = "/proc") -> dict[str, Any]:
+    """Inspect all threads under /proc/<pid>/task for state counts and D-state wait channels."""
+    tdir = f"{proc_root}/{pid}/task"
+    try:
+        tids = [t for t in os.listdir(tdir) if t.isdigit()]
+    except OSError:
+        tids = []
+
+    total = r_cnt = d_cnt = s_cnt = 0
+    d_wchans: Counter[str] = Counter()
+    blocked: list[dict[str, Any]] = []
+
+    for tid_str in sorted(tids, key=int):
+        tst = read_text(f"{tdir}/{tid_str}/stat")
+        if not tst:
+            continue
+        parsed = parse_proc_stat(tst)
+        if not parsed:
+            continue
+        tcomm, tstate, _, _, _, _ = parsed
+        total += 1
+        if tstate == "R":
+            r_cnt += 1
+        elif tstate == "D":
+            d_cnt += 1
+            wchan = (read_text(f"{tdir}/{tid_str}/wchan") or "-").strip() or "-"
+            d_wchans[wchan] += 1
+            blocked.append({"tid": int(tid_str), "comm": tcomm, "state": tstate, "wchan": wchan})
+        elif tstate in ("S", "I"):
+            s_cnt += 1
+
+    blocked.sort(key=lambda b: (b["wchan"], b["tid"]))
+    return {
+        "total_threads": total,
+        "r_threads": r_cnt,
+        "d_threads": d_cnt,
+        "s_threads": s_cnt,
+        "d_wchans": dict(d_wchans.most_common(10)),
+        "blocked_threads": blocked,
+    }
+
+
+def classify_pid_verdict(
+    target: dict[str, Any],
+    threads: dict[str, Any],
+    subtree: dict[str, Any],
+    mem: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Classify a single process + descendant subtree into an actionable verdict."""
+    pid = target.get("pid", 0)
+    comm = target.get("comm", "?")
+    state = target.get("state", "")
+    d_threads = int(threads.get("d_threads", 0))
+    subtree_d = int(subtree.get("subtree_d_threads", d_threads))
+    d_wchans = threads.get("d_wchans") or {}
+
+    cpu_pct = float(target.get("cpu_pct", 0.0))
+    sub_cpu_pct = float(subtree.get("subtree_cpu_pct", cpu_pct))
+    eff_cpu = max(cpu_pct, sub_cpu_pct)
+
+    r_mbs = float(target.get("r_mbs", 0.0))
+    w_mbs = float(target.get("w_mbs", 0.0))
+    wchar_mbs = float(target.get("wchar_mbs", 0.0))
+    sub_io_mbs = float(subtree.get("subtree_r_mbs", r_mbs)) + float(subtree.get("subtree_w_mbs", w_mbs))
+    eff_io_mbs = max(r_mbs + w_mbs, sub_io_mbs)
+
+    rss_mib = float(target.get("rss_mib", 0.0))
+    sub_rss_mib = float(subtree.get("subtree_rss_mib", rss_mib))
+    eff_rss_mib = max(rss_mib, sub_rss_mib)
+    swap_mib = float(target.get("swap_mib", 0.0))
+    oom_score = target.get("oom_score") or 0
+    mem_total_mib = (float(mem.get("mem_total_gib", 0.0)) * 1024.0) if mem else 0.0
+    rss_pct = (100.0 * eff_rss_mib / mem_total_mib) if mem_total_mib > 0 else 0.0
+
+    reasons: list[str] = []
+    recommendations: list[str] = []
+
+    if state == "D" or d_threads > 0 or subtree_d >= 2:
+        status = "BLOCKED_ON_IO"
+        is_issue = True
+        wchan_str = ", ".join(f"{k}={v}" for k, v in list(d_wchans.items())[:4]) or "uninterruptible sleep"
+        reasons.append(
+            f"PID {pid} ({comm}) has D-state threads (target={d_threads}, subtree={subtree_d}; wchans: {wchan_str})."
+        )
+        mnts = target.get("mounts") or []
+        if mnts:
+            reasons.append(f"Active mounts for PID {pid}: {', '.join(mnts)}.")
+        if "balance_dirty_pages" in d_wchans:
+            recommendations.append(
+                "Process is throttled in balance_dirty_pages writeback; reduce concurrent writers or lower I/O priority (ionice -c3)."
+            )
+        else:
+            recommendations.append(
+                "Check backing disk latency/utilization and dmesg for storage stalls affecting this PID's mounts."
+            )
+    elif (
+        swap_mib >= 512.0
+        or (oom_score >= 500 and eff_rss_mib >= 1024.0)
+        or rss_pct >= 25.0
+        or eff_rss_mib >= 8192.0
+    ):
+        status = "MEMORY_HEAVY"
+        is_issue = True
+        reasons.append(
+            f"PID {pid} ({comm}) has heavy memory footprint: rss={rss_mib:.1f} MiB "
+            f"(subtree={sub_rss_mib:.1f} MiB), swap={swap_mib:.1f} MiB, oom_score={oom_score}."
+        )
+        recommendations.append(
+            "Inspect memory growth/caches or set cgroup memory limits to avoid swap thrashing or OOM kills."
+        )
+    elif eff_cpu >= 80.0:
+        status = "CPU_BOUND"
+        is_spinner = (
+            cpu_pct >= 95.0
+            and eff_io_mbs == 0.0
+            and int(target.get("elapsed_sec", 0)) >= 300
+            and int(subtree.get("descendant_count", 0)) == 0
+        )
+        is_issue = is_spinner
+        reasons.append(
+            f"PID {pid} ({comm}) is CPU-bound: target={cpu_pct:.1f}% CPU, subtree={sub_cpu_pct:.1f}% CPU "
+            f"(R-threads={threads.get('r_threads', 0)})."
+        )
+        if is_spinner:
+            reasons.append("Sustained >=95% single-process CPU with zero I/O for >=5m (possible spin loop).")
+            recommendations.append("Inspect with strace/perf or stack sampler to verify forward progress.")
+        else:
+            recommendations.append("CPU compute appears active; use nice/cpulimit/cgroup quota if throttling is needed.")
+    elif eff_io_mbs >= 1.0 or wchar_mbs >= 5.0:
+        status = "IO_ACTIVE"
+        is_issue = False
+        reasons.append(
+            f"PID {pid} ({comm}) is performing active I/O: r={r_mbs:.2f} MB/s, w={w_mbs:.2f} MB/s, "
+            f"wchar={wchar_mbs:.2f} MB/s (subtree total={sub_io_mbs:.2f} MB/s)."
+        )
+        recommendations.append("I/O is progressing without D-state stalls; no immediate intervention needed.")
+    else:
+        status = "IDLE_OR_SLEEPING"
+        is_issue = False
+        reasons.append(
+            f"PID {pid} ({comm}) is mostly idle/sleeping (state={state or '?'}, cpu={eff_cpu:.1f}%, "
+            f"io={eff_io_mbs:.2f} MB/s, rss={rss_mib:.1f} MiB)."
+        )
+        recommendations.append("No immediate intervention needed.")
+
+    return {
+        "status": status,
+        "is_issue": is_issue,
+        "reasons": reasons,
+        "recommendations": recommendations,
+    }
+
+
+def investigate_pid(
+    pid: int,
+    interval: float = 2.0,
+    top_n: int = 10,
+    no_statvfs: bool = False,
+) -> dict[str, Any]:
+    """Run a two-snapshot targeted investigation of a single PID and its descendant subtree."""
+    if pid <= 0:
+        raise ValueError("PID must be > 0")
+    include_self = pid == os.getpid()
+
+    ts_start = time.monotonic()
+    procs0 = snapshot_procs(inspect_threads=False, include_self=include_self)
+    if pid not in procs0:
+        raise ProcessLookupError(f"PID {pid} not found in /proc")
+
+    time.sleep(interval)
+
+    procs1 = snapshot_procs(inspect_threads=True, include_self=include_self)
+    dt_sec = max(0.05, time.monotonic() - ts_start)
+    if pid not in procs1:
+        raise ProcessLookupError(f"PID {pid} exited during sample window")
+
+    p0 = procs0[pid]
+    p1 = procs1[pid]
+    uptime = read_uptime_sec()
+    mem = read_meminfo()
+    mount_map = map_disks_to_mounts(allow_statvfs=not no_statvfs)
+    all_mount_points = sorted({m["mount"] for mlist in mount_map.values() for m in mlist})
+
+    # Target process deltas.
+    same_instance = p0.starttime == p1.starttime
+    dticks = max(0, p1.cpu_ticks - p0.cpu_ticks) if same_instance else 0
+    cpu_pct = round(100.0 * (dticks / CLK_TCK) / dt_sec, 1)
+    r_mbs = w_mbs = wchar_mbs = 0.0
+    if same_instance:
+        if p1.read_bytes is not None and p0.read_bytes is not None:
+            r_mbs = round(max(0, p1.read_bytes - p0.read_bytes) / (1e6 * dt_sec), 2)
+        if p1.write_bytes is not None and p0.write_bytes is not None:
+            w_mbs = round(max(0, p1.write_bytes - p0.write_bytes) / (1e6 * dt_sec), 2)
+        if p1.wchar is not None and p0.wchar is not None:
+            wchar_mbs = round(max(0, p1.wchar - p0.wchar) / (1e6 * dt_sec), 2)
+
+    el_sec = max(0.0, uptime - p1.starttime / CLK_TCK)
+    cgroup = read_proc_cgroup(pid)
+    mounts = attribute_pid_mounts(pid, all_mount_points)
+    swap_mib = read_pid_swap_mib(pid)
+    oom_score = read_pid_oom_score(pid)
+    thread_summary = inspect_pid_threads(pid)
+
+    # Build descendant subtree from ppid relationships in procs1.
+    children_map: dict[int, list[int]] = defaultdict(list)
+    for cpid, psnap in procs1.items():
+        if cpid != psnap.ppid:
+            children_map[psnap.ppid].append(cpid)
+
+    descendant_pids: list[int] = []
+    queue = list(children_map.get(pid, []))
+    seen: set[int] = {pid}
+    while queue:
+        cur = queue.pop(0)
+        if cur in seen or cur not in procs1:
+            continue
+        seen.add(cur)
+        descendant_pids.append(cur)
+        queue.extend(children_map.get(cur, []))
+
+    desc_rows: list[dict[str, Any]] = []
+    for dpid in descendant_pids:
+        dp1 = procs1[dpid]
+        dp0 = procs0.get(dpid)
+        d_same = dp0 is not None and dp0.starttime == dp1.starttime
+        d_cpu = round(100.0 * (max(0, dp1.cpu_ticks - dp0.cpu_ticks) / CLK_TCK) / dt_sec, 1) if d_same and dp0 else 0.0
+        d_r = d_w = 0.0
+        if d_same and dp0:
+            if dp1.read_bytes is not None and dp0.read_bytes is not None:
+                d_r = round(max(0, dp1.read_bytes - dp0.read_bytes) / (1e6 * dt_sec), 2)
+            if dp1.write_bytes is not None and dp0.write_bytes is not None:
+                d_w = round(max(0, dp1.write_bytes - dp0.write_bytes) / (1e6 * dt_sec), 2)
+        d_el = max(0.0, uptime - dp1.starttime / CLK_TCK)
+        desc_rows.append(
+            {
+                "pid": dpid,
+                "ppid": dp1.ppid,
+                "comm": dp1.comm,
+                "state": dp1.state,
+                "cpu_pct": d_cpu,
+                "rss_mib": dp1.rss_mib,
+                "r_mbs": d_r,
+                "w_mbs": d_w,
+                "d_threads": sum(dp1.d_threads.values()),
+                "elapsed": format_elapsed(d_el),
+                "cmdline": dp1.cmdline[:160],
+            }
+        )
+
+    desc_rows.sort(key=lambda r: (r["d_threads"], r["cpu_pct"], r["w_mbs"] + r["r_mbs"], r["rss_mib"]), reverse=True)
+    top_descendants = desc_rows[:top_n]
+    for row in top_descendants:
+        row["cgroup"] = read_proc_cgroup(row["pid"])
+
+    subtree = {
+        "descendant_count": len(desc_rows),
+        "subtree_cpu_pct": round(cpu_pct + sum(r["cpu_pct"] for r in desc_rows), 1),
+        "subtree_rss_mib": round(p1.rss_mib + sum(r["rss_mib"] for r in desc_rows), 1),
+        "subtree_w_mbs": round(w_mbs + sum(r["w_mbs"] for r in desc_rows), 2),
+        "subtree_r_mbs": round(r_mbs + sum(r["r_mbs"] for r in desc_rows), 2),
+        "subtree_d_threads": int(thread_summary["d_threads"]) + sum(r["d_threads"] for r in desc_rows),
+        "top_descendants": top_descendants,
+    }
+
+    target = {
+        "pid": pid,
+        "ppid": p1.ppid,
+        "comm": p1.comm,
+        "state": p1.state,
+        "elapsed_sec": int(el_sec),
+        "elapsed": format_elapsed(el_sec),
+        "cmdline": p1.cmdline[:240],
+        "ancestry": build_ancestry(pid, procs1, uptime),
+        "cgroup": cgroup,
+        "mounts": mounts,
+        "cpu_pct": cpu_pct,
+        "rss_mib": p1.rss_mib,
+        "swap_mib": swap_mib,
+        "r_mbs": r_mbs,
+        "w_mbs": w_mbs,
+        "wchar_mbs": wchar_mbs,
+        "oom_score": oom_score,
+    }
+
+    verdict = classify_pid_verdict(target=target, threads=thread_summary, subtree=subtree, mem=mem)
+    return {
+        "mode": "pid",
+        "timestamp": dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "sample_sec": round(dt_sec, 2),
+        "verdict": verdict,
+        "target": target,
+        "threads": thread_summary,
+        "subtree": subtree,
+    }
+
+
+def render_pid_text(rep: dict[str, Any], markdown: bool = False) -> str:
+    """Format a PID diagnostic report in plain text or Markdown."""
+    t = rep["target"]
+    th = rep["threads"]
+    sub = rep["subtree"]
+    v = rep["verdict"]
+    h = (lambda s: f"## {s}") if markdown else (lambda s: f"=== {s} ===")
+
+    lines: list[str] = []
+    lines.append(
+        f"{'# ' if markdown else ''}PID Investigation: {t['pid']} ({t['comm']}) @ {rep['timestamp']} (window={rep['sample_sec']}s)"
+    )
+    lines.append(f"Status      : {v['status']}")
+    for r in v["reasons"]:
+        lines.append(f"  - {r}")
+    lines.append("")
+
+    lines.append(h("Process Identity"))
+    lines.append(
+        f"PID={t['pid']} PPID={t['ppid']} State={t['state']} Elapsed={t['elapsed']} ({t['elapsed_sec']}s)"
+    )
+    lines.append(f"Cgroup  : {t['cgroup']}")
+    lines.append(f"Mounts  : {', '.join(t['mounts']) if t['mounts'] else '-'}")
+    lines.append(f"Ancestry: {t['ancestry']}")
+    lines.append(f"Cmdline : {t['cmdline']}")
+    lines.append("")
+
+    lines.append(h("Resource Metrics"))
+    oom_str = str(t["oom_score"]) if t["oom_score"] is not None else "-"
+    lines.append(
+        f"CPU={t['cpu_pct']:.1f}% | RSS={t['rss_mib']:.1f} MiB | Swap={t['swap_mib']:.1f} MiB | OOM={oom_str}"
+    )
+    lines.append(
+        f"I/O: R={t['r_mbs']:.2f} MB/s | W={t['w_mbs']:.2f} MB/s | WChar={t['wchar_mbs']:.2f} MB/s"
+    )
+    lines.append("")
+
+    lines.append(h("Threads"))
+    lines.append(
+        f"Total={th['total_threads']} | R={th['r_threads']} | D={th['d_threads']} | S={th['s_threads']}"
+    )
+    if th["d_wchans"]:
+        lines.append("D-Wchans: " + ", ".join(f"{k}={val}" for k, val in th["d_wchans"].items()))
+    if th["blocked_threads"]:
+        lines.append(f"{'TID':>8} {'STATE':<5} {'COMM':<16} WCHAN")
+        for b in th["blocked_threads"][:20]:
+            lines.append(f"{b['tid']:>8} {b['state']:<5} {b['comm']:<16} {b['wchan']}")
+    lines.append("")
+
+    lines.append(h("Descendant Subtree"))
+    lines.append(
+        f"Descendants={sub['descendant_count']} | Subtree CPU={sub['subtree_cpu_pct']:.1f}% | "
+        f"RSS={sub['subtree_rss_mib']:.1f} MiB | W={sub['subtree_w_mbs']:.2f} MB/s | "
+        f"R={sub['subtree_r_mbs']:.2f} MB/s | D-threads={sub['subtree_d_threads']}"
+    )
+    if sub["top_descendants"]:
+        lines.append(f"{'PID':>8} {'PPID':>8} {'ST':<3} {'%CPU':>6} {'RSS_M':>7} {'W_MB/s':>7} {'D':>3} {'COMM':<16} CMD")
+        for d in sub["top_descendants"]:
+            lines.append(
+                f"{d['pid']:>8} {d['ppid']:>8} {d['state']:<3} {d['cpu_pct']:>6.1f} {d['rss_mib']:>7.1f} "
+                f"{d['w_mbs']:>7.2f} {d['d_threads']:>3} {d['comm']:<16} {d['cmdline'][:72]}"
+            )
+    lines.append("")
+
+    lines.append(h("Recommendations"))
+    for rec in v["recommendations"]:
+        lines.append(f"- {rec}")
+    return "\n".join(lines)
 
 
 def investigate_progress(
@@ -1064,36 +1725,58 @@ def render_text(rep: dict[str, Any], markdown: bool = False) -> str:
             )
         lines.append("")
 
+    nvme_rows = rep.get("nvme_health") or []
+    tz_rows = rep.get("thermal_zones") or []
+    if nvme_rows or tz_rows:
+        lines.append(h("NVMe / Thermal Telemetry"))
+        if nvme_rows:
+            lines.append(f"{'CTRL':<8} {'STATE':<8} {'TEMP_C':>7} {'MAX_C':>6} {'CRIT_C':>7} {'ALARM':<5} {'STATUS':<9} MODEL")
+            for n in nvme_rows:
+                tc = f"{n['temp_c']:.1f}" if n.get("temp_c") is not None else "-"
+                tm = f"{n['temp_max_c']:.1f}" if n.get("temp_max_c") is not None else "-"
+                tcr = f"{n['temp_crit_c']:.1f}" if n.get("temp_crit_c") is not None else "-"
+                alm = "YES" if n.get("alarm") else "no"
+                lines.append(
+                    f"{n['controller']:<8} {n['state']:<8} {tc:>7} {tm:>6} {tcr:>7} {alm:<5} {n['thermal_status']:<9} {n['model']}"
+                )
+        if tz_rows:
+            tz_str = ", ".join(f"{z['type']}({z['zone']})={z['temp_c']:.1f}°C" for z in tz_rows[:12])
+            lines.append(f"Thermal zones: {tz_str}")
+        lines.append("")
+
     if rep["d_state_top"]:
         lines.append(h(f"Blocked (D-State) Threads (total={l['d_threads']})"))
         if rep["d_state_wchans"]:
             lines.append("Wchans: " + ", ".join(f"{k}={v}" for k, v in rep["d_state_wchans"].items()))
-        lines.append(f"{'THRD':>5} {'PID':>8} {'ELAPSED':>10} {'COMM':<16} {'WCHAN':<24} {'MOUNTS':<14} CMD")
+        lines.append(f"{'THRD':>5} {'PID':>8} {'ELAPSED':>10} {'COMM':<16} {'WCHAN':<24} {'MOUNTS':<14} {'CGROUP':<22} CMD")
         for g in rep["d_state_top"]:
             mnts = ",".join(g.get("mounts") or []) or "-"
+            cg = _truncate_label(g.get("cgroup") or "-", 22)
             lines.append(
-                f"{g['threads']:>5} {g['pid']:>8} {g['elapsed']:>10} {g['comm']:<16} {g['wchan']:<24} {mnts:<14} {g['cmdline'][:80]}"
+                f"{g['threads']:>5} {g['pid']:>8} {g['elapsed']:>10} {g['comm']:<16} {g['wchan']:<24} {mnts:<14} {cg:<22} {g['cmdline'][:72]}"
             )
         lines.append("")
 
     if rep["top_cpu"]:
         lines.append(h("Top CPU Consumers (instantaneous %)"))
-        lines.append(f"{'PID':>8} {'%CPU':>6} {'RSS_M':>7} {'W_MB/s':>7} {'R_MB/s':>7} {'ELAPSED':>10} {'COMM':<16} CMD")
+        lines.append(f"{'PID':>8} {'%CPU':>6} {'RSS_M':>7} {'W_MB/s':>7} {'R_MB/s':>7} {'ELAPSED':>10} {'COMM':<16} {'CGROUP':<22} CMD")
         for p in rep["top_cpu"]:
+            cg = _truncate_label(p.get("cgroup") or "-", 22)
             lines.append(
                 f"{p['pid']:>8} {p['cpu_pct']:>6.1f} {p['rss_mib']:>7.1f} {p['w_mbs']:>7.2f} "
-                f"{p['r_mbs']:>7.2f} {p['elapsed']:>10} {p['comm']:<16} {p['cmdline'][:80]}"
+                f"{p['r_mbs']:>7.2f} {p['elapsed']:>10} {p['comm']:<16} {cg:<22} {p['cmdline'][:72]}"
             )
         lines.append("")
 
     if rep["top_io"]:
         lines.append(h("Top Process I/O (readable /proc/*/io)"))
-        lines.append(f"{'PID':>8} {'W_MB/s':>8} {'R_MB/s':>8} {'WCH_M/s':>8} {'ELAPSED':>10} {'COMM':<16} {'MOUNTS':<14} CMD")
+        lines.append(f"{'PID':>8} {'W_MB/s':>8} {'R_MB/s':>8} {'WCH_M/s':>8} {'ELAPSED':>10} {'COMM':<16} {'MOUNTS':<14} {'CGROUP':<22} CMD")
         for p in rep["top_io"]:
             mnts = ",".join(p.get("mounts") or []) or "-"
+            cg = _truncate_label(p.get("cgroup") or "-", 22)
             lines.append(
                 f"{p['pid']:>8} {p['w_mbs']:>8.2f} {p['r_mbs']:>8.2f} {p['wchar_mbs']:>8.2f} "
-                f"{p['elapsed']:>10} {p['comm']:<16} {mnts:<14} {p['cmdline'][:72]}"
+                f"{p['elapsed']:>10} {p['comm']:<16} {mnts:<14} {cg:<22} {p['cmdline'][:64]}"
             )
         lines.append("")
 
@@ -1173,6 +1856,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Append each report as a compact JSONL line to PATH (creates parent directories if needed)",
     )
     p.add_argument(
+        "--diagnose-pid",
+        type=int,
+        default=None,
+        metavar="PID",
+        help="Run a targeted two-snapshot diagnosis of PID and its descendant process tree",
+    )
+    p.add_argument(
         "--exit-on-issue",
         action="store_true",
         help="Exit with code 3 when bottleneck is thrashing, wedged, or suspected spin loop",
@@ -1195,12 +1885,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.watch is not None and args.watch < 0:
         print("error: --watch COUNT must be >= 0", file=sys.stderr)
         return 1
+    if args.diagnose_pid is not None:
+        if args.diagnose_pid <= 0:
+            print("error: --diagnose-pid PID must be > 0", file=sys.stderr)
+            return 1
+        if not Path(f"/proc/{args.diagnose_pid}").is_dir():
+            print(f"error: PID {args.diagnose_pid} does not exist in /proc", file=sys.stderr)
+            return 1
 
     if args.verbose:
         print(
             f"config: interval={args.interval}s top={args.top} "
             f"format={'json' if args.json else 'markdown' if args.markdown else 'text'} "
             f"watch={args.watch} progress_check={args.progress_check} "
+            f"diagnose_pid={args.diagnose_pid} "
             f"no_statvfs={args.no_statvfs} append_log={args.append_log} "
             f"exit_on_issue={args.exit_on_issue}",
             file=sys.stderr,
@@ -1211,7 +1909,14 @@ def main(argv: list[str] | None = None) -> int:
     last_issue = False
     try:
         while runs == 0 or i < runs:
-            if args.progress_check:
+            if args.diagnose_pid is not None:
+                rep = investigate_pid(
+                    pid=args.diagnose_pid,
+                    interval=args.interval,
+                    top_n=args.top,
+                    no_statvfs=args.no_statvfs,
+                )
+            elif args.progress_check:
                 rep = investigate_progress(interval=args.interval, top_n=args.top, no_statvfs=args.no_statvfs)
             else:
                 rep = investigate(interval=args.interval, top_n=args.top, no_statvfs=args.no_statvfs)
@@ -1223,7 +1928,10 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 if i > 0:
                     print("\n" + "=" * 78 + "\n", flush=True)
-                print(render_text(rep, markdown=args.markdown), flush=True)
+                if args.diagnose_pid is not None:
+                    print(render_pid_text(rep, markdown=args.markdown), flush=True)
+                else:
+                    print(render_text(rep, markdown=args.markdown), flush=True)
             i += 1
     except KeyboardInterrupt:
         return 0
