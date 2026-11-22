@@ -27,6 +27,8 @@ Zero-dependency Linux sysadmin investigation and diagnostic CLIs designed to rem
 # Run live investigation
 sys-investigate
 sys-investigate --interval 2 --top 15
+sys-investigate --progress-check --interval 2
+sys-investigate --no-statvfs --append-log /var/tmp/sys-investigate.jsonl
 sys-investigate --json | jq '.verdict'
 sys-investigate --markdown
 sys-investigate --watch 5 --interval 3
@@ -35,4 +37,4 @@ sys-investigate --exit-on-issue --json > /tmp/sys-diag.json
 
 ## Status
 
-Initial repository scaffold and `sys-investigate` v0.1.0 implemented and verified; ready for handoff and expansion (see `docs/CHECKPOINT.md` and `docs/BUILDSPEC.md`).
+`sys-investigate` v0.2.0 implemented, installed, and verified (mount-safety hardening, process-to-mount attribution, two-window `--progress-check`, `--no-statvfs`, `--append-log`, and actionable thrashing recommendations; see `docs/CHECKPOINT.md` and `docs/BUILDSPEC.md`).

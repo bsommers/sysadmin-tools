@@ -26,9 +26,10 @@
    - Only scanned on the second snapshot (`inspect_threads=True`) to keep the first snapshot fast.
 3. **Standalone copy in `~/.local/bin/sys-investigate` (root NVMe) instead of symlink to `/datanapps`:**
    - Avoids circular dependency on a stalled data disk when you need the tool most.
-4. **`os.statvfs()` caveat (watch item):**
-   - `map_disks_to_mounts()` calls `os.statvfs(mnt)` to report disk fill %. On ext4/xfs this is normally cached in the VFS superblock and non-blocking, **but** on hung NFS/FUSE/SSHFS mounts `statvfs()` can block indefinitely.
-   - **Future hardening:** skip non-local filesystems (`fuse.*`, `nfs*`, `cifs`, `sshfs`, `autofs`) or add a `--no-statvfs` flag / timeout guard.
+4. **`os.statvfs()` caveat (hardened in v0.2.0):**
+   - `map_disks_to_mounts()` skips non-local/FUSE/network/automount filesystems (`is_safe_statvfs_fstype`) before calling `os.statvfs(mnt)` and supports `--no-statvfs` for zero-`statvfs` operation during severe storage hangs.
+5. **Bounded `/proc/<pid>/{cwd,fd}` mount attribution (v0.2.0):**
+   - Only runs on the selected `top_io` + `d_state_top` PIDs (cached per PID, capped at `max_fds=128`) using `os.readlink()`, which reads kernel dentry paths from memory without touching target filesystems.
 
 ### Dead Ends & Gotchas Observed
 - `ps %cpu` reports **lifetime average** CPU, not instantaneous CPU — misleading for long-lived processes or newly spawned bursts. Always use two-snapshot `/proc/<pid>/stat` tick deltas (`utime + stime`).
@@ -36,3 +37,4 @@
 - `/proc/<pid>/stat` `comm` field can contain spaces and parentheses (e.g. `(kworker/u129:15+flush-259:3)`), so parsing MUST split on `find("(")` and `rfind(")")`, never naive `.split()`.
 - `wchar` in `/proc/<pid>/io` includes pipes, sockets, PTYs, and Wayland IPC (e.g., `bilterm --gui --tron` showed `400–640 MB/s` `wchar` with `0.00 MB/s` `write_bytes`). Keep `write_bytes` (actual storage writeback) distinct from `wchar` so terminal/IPC chatter isn't misdiagnosed as disk saturation.
 - `nvme0n1` vs `nvme0n1p1`: filtering whole physical disks requires checking `"p" not in name.split("n", 2)[-1]` for NVMe and `not name[-1].isdigit()` for `sd*`/`vd*`.
+- Live check during v0.2.0 caught two classifier edge cases on `nvme2n1`: (1) single-process `THRASHING_LOW_EFFICIENCY` (`Dirty=13.98 GiB`, `w_await=1862ms`) with no overlapping scripts previously fell through to `"No immediate intervention needed."`; (2) `util=82.4%` with `aqu_sz=202.71` and `w_await=1388.5ms` (`Dirty=1.65 GiB`) previously missed the `util >= 90%` thrashing check and reported `PRODUCTIVE_IO`. Both are now fixed and locked with unit tests.

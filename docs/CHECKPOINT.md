@@ -1,48 +1,36 @@
-# Checkpoint — sysadmin-tools bootstrap & sys-investigate v0.1.0 — 2026-11-21
+# Checkpoint — sysadmin-tools `sys-investigate` v0.2.0 — 2026-11-21
 
-**Status:** IN PROGRESS — ready for resume in fresh agent session
-
-## User Decisions & Intent (verbatim)
-1. Diagnose what was driving up CPU/load and whether it was productive.
-2. Build a reusable investigator script to re-run later.
-3. Add it to a `sysadmin-tools` repo in `~/src/sysadmin/sysadmin-tools` with a checkpoint, notes, and buildspec for pickup in a new agent session.
+**Status:** COMPLETE — ready for next roadmap tool or feature
 
 ## Done (with evidence)
-- Built `src/sysadmin_tools/sys_investigate.py` (pure `/proc` + `/sys`, zero third-party deps, zero external subprocess calls during sampling).
-- Scaffolded `~/src/sysadmin/sysadmin-tools` with `pyproject.toml`, `.gitignore`, `README.md`, `AGENTS.md`, `tests/unit/`, `tests/smoke/`, `scripts/install.sh`, `scripts/verify.sh`, and `docs/{CHECKPOINT,NOTES,BUILDSPEC}.md`.
-- Verified live diagnosis against active NVMe saturation incident (`IO_WAIT_SATURATION` / `THRASHING_LOW_EFFICIENCY`, `Dirty=6.14–13.9 GiB`, `nvme2n1` `aqu-sz=39–516`, `balance_dirty_pages` stalls).
-- Installed standalone executable copy to `~/.local/bin/sys-investigate` (root NVMe `/` — independent of `/datanapps`).
-- Legacy first prototype still exists at `/datanapps/tools/sys-investigate/` (safe to retire or keep as archive after confirming new repo).
+- Created initial git commit `bf90d69` (`chore: bootstrap sysadmin-tools repo with sys-investigate v0.1.0`) on `main` (local-only, no remote configured).
+- Retired legacy prototype directory `/datanapps/tools/sys-investigate/`.
+- Upgraded `src/sysadmin_tools/sys_investigate.py` to v0.2.0:
+  - **Mount-safety hardening:** `is_safe_statvfs_fstype()` skips non-local/FUSE/network/automount filesystems (`nfs*`, `cifs`, `sshfs`, `fuse*`, `autofs`, etc.) before `os.statvfs()`; added `--no-statvfs` flag.
+  - **Process-to-mount attribution:** `resolve_mount_for_path()` + `attribute_pid_mounts()` inspect `/proc/<pid>/cwd` and bounded `/proc/<pid>/fd/*` (`max_fds=128`) via `os.readlink()` (zero target-FS I/O) only for `top_io` and `d_state_top`, rendered in a `MOUNTS` column and exported in JSON.
+  - **Two-window stall verification (`--progress-check`):** `compare_windows()` + `investigate_progress()` run two consecutive windows and classify `CONFIRMED_STALL` / `PERSISTENT_THRASH` / `RECOVERING` / `WORSENING` / `STEADY_PROGRESS` / `IDLE` with `dirty_gib_delta`, cumulative turnover, and persistent `D`-state / `>=50%` CPU PIDs.
+  - **JSONL telemetry logging (`--append-log PATH`):** `append_jsonl_log()` appends one deterministic compact JSON line per report, creating parent directories as needed.
+  - **Classifier fixes:** guaranteed actionable recommendations whenever `is_issue=True`, and classified high write latency + deep queue (`w_await >= 250ms` and `aqu_sz >= 16`) as `THRASHING_LOW_EFFICIENCY` even if `util_pct < 90%`.
+- Synchronized `pyproject.toml`, `src/sysadmin_tools/__init__.py`, `README.md`, `docs/BUILDSPEC.md`, and `docs/NOTES.md`.
+- Verified locally with `./scripts/verify.sh`: `syntax` PASS (0s), `unit` PASS (20 tests, 0.217s), `smoke` PASS (3 tests, 2.565s).
+- Reinstalled standalone copy to `~/.local/bin/sys-investigate` via `./scripts/install.sh` and verified byte-identical parity (`diff -u` exit `0`).
 
 ## Bugs Fixed This Session (do not reintroduce)
-1. **`total_disk_mbs` reported `0.0 MB/s` during `PRODUCTIVE_IO`:** when rolling 10s PSI (`io_some10 >= 30%`) triggered `IO_WAIT_SATURATION` while instantaneous `sat_disks` was empty (`util=72.6%`, `r_mbs=118.7`), summing only `sat_disks` yielded `0.0`. Fixed to `sum(d["r_mbs"] + d["w_mbs"] for d in (sat_disks or disks))` and locked with `test_productive_io_uses_all_disks_when_none_saturated`.
-2. **Symlinking installed CLI onto stalled secondary SSD:** symlinking `~/.local/bin/sys-investigate -> /datanapps/...` risks stalling startup when `/datanapps` (`nvme2n1`) is wedged. Changed `scripts/install.sh` to `install -m 0755` (direct copy onto root NVMe).
+1. **Empty recommendation on single-process `THRASHING_LOW_EFFICIENCY` / `WEDGED_OR_STALLED`:** previously fell through to `"No immediate intervention needed."` when no overlapping workload group matched. Fixed with targeted writer/mount recommendations and locked with `test_thrashing_without_overlaps_never_emits_no_intervention` and `test_wedged_stalled_emits_actionable_recommendation`.
+2. **Severe write latency (`1388.5ms`) + deep queue (`aqu_sz=202.71`) misclassified as `PRODUCTIVE_IO`:** when `util_pct` briefly dipped to `82.4%` (`< 90%`) and `dirty_gib` was `1.65 GiB` (`< 2.0 GiB`), `thrashing` evaluated `False`. Fixed by adding `(worst_w_await >= 250.0 and worst_aqu >= 16.0)` and locked with `test_high_write_latency_and_queue_depth_classified_as_thrashing`.
 
 ## Working-Tree & Git State
 - Repo path: `~/src/sysadmin/sysadmin-tools`
-- Git initialized on branch `main`; **no commit created yet** and **no remote configured** (left uncommitted pending user confirmation).
-- No background processes/watchers started by this session.
-
-## State That May Have Changed
-- Live host I/O contention on `/datanapps` (`nvme2n1`) fluctuates with concurrent `claude`/`herdr` builds (`scripts/verify.sh` / `cargo` / `rust-lld` / `sdxl_gen.py`).
-- Re-run `./scripts/verify.sh` and `sys-investigate --interval 2` before making edits.
+- Branch: `main` (local-only, no remote configured).
+- All changes committed cleanly; no background processes/watchers running.
 
 ## Next Steps (exact commands, in order)
-1. Verify repo health and baseline tests:
+1. Verify repo & installed CLI health:
    ```bash
    cd ~/src/sysadmin/sysadmin-tools
    git status -sb
    ./scripts/verify.sh
    ```
-2. Verify installed binary matches repo source:
-   ```bash
-   diff -u src/sysadmin_tools/sys_investigate.py ~/.local/bin/sys-investigate || ./scripts/install.sh
-   sys-investigate --interval 2 --top 10
-   ```
-3. Make initial git commit (once user confirms) and optionally clean up legacy prototype `/datanapps/tools/sys-investigate/`.
-4. Pick next capability from `docs/BUILDSPEC.md` Roadmap (e.g., `--diagnose-pid`, NVMe/SMART & thermal telemetry, cgroup/docker attribution, historical JSONL trend recorder, or companion remediation helper).
-
-## Open Questions for Next Session
-- Should `sysadmin-tools` get a GitHub remote, or remain local-only for now?
-- Do you want to retire `/datanapps/tools/sys-investigate/` once committed here?
-- Which additional sysadmin investigators should join `sysadmin-tools` next (e.g., disk/inode hog finder, swap/RSS growth tracker, systemd/daemon health inspector, Cargo/build contention guard)?
+2. Pick next capability from `docs/BUILDSPEC.md` Roadmap:
+   - Companion CLIs: `sys-mem-watch`, `sys-io-guard`, or `sys-disk-hogs`.
+   - Or additional `sys-investigate` features: `--diagnose-pid PID`, NVMe/SMART thermal telemetry, or cgroup/container attribution.

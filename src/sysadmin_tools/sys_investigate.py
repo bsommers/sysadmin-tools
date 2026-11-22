@@ -9,6 +9,8 @@ Examples:
   sys-investigate --interval 3 --top 15
   sys-investigate --json | jq '.verdict'
   sys-investigate --watch 5 --interval 2
+  sys-investigate --progress-check --interval 2
+  sys-investigate --append-log /var/tmp/sys-investigate.jsonl --no-statvfs
   sys-investigate --exit-on-issue --json > /tmp/diag.json
 """
 
@@ -220,15 +222,61 @@ def read_diskstats() -> dict[str, dict[str, int]]:
     return stats
 
 
-def map_disks_to_mounts() -> dict[str, list[dict[str, Any]]]:
-    txt = read_text("/proc/mounts") or ""
+NON_LOCAL_FSTYPES = frozenset(
+    {
+        "fuse",
+        "fuseblk",
+        "fusectl",
+        "nfs",
+        "nfs4",
+        "cifs",
+        "smb3",
+        "smbfs",
+        "sshfs",
+        "autofs",
+        "davfs",
+        "glusterfs",
+        "ceph",
+        "lustre",
+        "9p",
+        "virtiofs",
+        "afs",
+        "coda",
+        "ncpfs",
+        "gfs",
+        "gfs2",
+        "ocfs2",
+    }
+)
+
+PSEUDO_PATH_PREFIXES = ("/proc", "/sys", "/dev", "/run")
+
+
+def is_safe_statvfs_fstype(fstype: str) -> bool:
+    """Return False for network, FUSE, or automount filesystems where statvfs can hang."""
+    ft = fstype.lower()
+    if ft in NON_LOCAL_FSTYPES or ft.startswith("fuse."):
+        return False
+    return True
+
+
+def map_disks_to_mounts(
+    allow_statvfs: bool = True,
+    mounts_txt: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    txt = read_text("/proc/mounts") or "" if mounts_txt is None else mounts_txt
     mapping: dict[str, list[dict[str, Any]]] = defaultdict(list)
     seen: set[tuple[str, str]] = set()
     for line in txt.splitlines():
         parts = line.split()
         if len(parts) < 3 or not parts[0].startswith("/dev/"):
             continue
-        dev_name = os.path.basename(os.path.realpath(parts[0]))
+        fstype = parts[2]
+        try:
+            resolved_dev = os.path.realpath(parts[0])
+        except OSError:
+            resolved_dev = parts[0]
+        dev_name = os.path.basename(resolved_dev)
         mnt = parts[1].replace("\\040", " ")
         parent = dev_name
         if dev_name.startswith("nvme") and "p" in dev_name:
@@ -241,14 +289,75 @@ def map_disks_to_mounts() -> dict[str, list[dict[str, Any]]]:
             continue
         seen.add((parent, mnt))
         used_pct = None
-        try:
-            st = os.statvfs(mnt)
-            if st.f_blocks > 0:
-                used_pct = round(100.0 * (st.f_blocks - st.f_bfree) / st.f_blocks, 1)
-        except OSError:
-            pass
-        mapping[parent].append({"mount": mnt, "fstype": parts[2], "used_pct": used_pct})
+        if allow_statvfs and is_safe_statvfs_fstype(fstype):
+            try:
+                st = os.statvfs(mnt)
+                if st.f_blocks > 0:
+                    used_pct = round(100.0 * (st.f_blocks - st.f_bfree) / st.f_blocks, 1)
+            except OSError:
+                pass
+        mapping[parent].append({"mount": mnt, "fstype": fstype, "used_pct": used_pct})
     return dict(mapping)
+
+
+def resolve_mount_for_path(path: str, mount_points: list[str]) -> str | None:
+    """Resolve a file path to its deepest matching mountpoint, ignoring pseudo-filesystems."""
+    if not path.startswith("/"):
+        return None
+    if path.endswith(" (deleted)"):
+        path = path[: -len(" (deleted)")]
+    for prefix in PSEUDO_PATH_PREFIXES:
+        if path == prefix or path.startswith(prefix + "/"):
+            return None
+    best: str | None = None
+    best_len = -1
+    for mnt in mount_points:
+        if mnt == "/":
+            matched = True
+        else:
+            norm = mnt.rstrip("/")
+            matched = path == norm or path.startswith(norm + "/")
+        if matched and len(mnt) > best_len:
+            best = mnt
+            best_len = len(mnt)
+    return best
+
+
+def attribute_pid_mounts(
+    pid: int,
+    mount_points: list[str],
+    max_fds: int = 128,
+    max_mounts: int = 3,
+    proc_root: str = "/proc",
+) -> list[str]:
+    """Inspect /proc/<pid>/cwd and bounded /proc/<pid>/fd/* symlinks to attribute active mounts."""
+    if not mount_points:
+        return []
+    hits: Counter[str] = Counter()
+    pdir = f"{proc_root}/{pid}"
+    try:
+        cwd = os.readlink(f"{pdir}/cwd")
+        m = resolve_mount_for_path(cwd, mount_points)
+        if m:
+            hits[m] += 1
+    except OSError:
+        pass
+
+    try:
+        fd_names = os.listdir(f"{pdir}/fd")
+    except OSError:
+        fd_names = []
+    for fd in fd_names[:max_fds]:
+        try:
+            target = os.readlink(f"{pdir}/fd/{fd}")
+        except OSError:
+            continue
+        m = resolve_mount_for_path(target, mount_points)
+        if m:
+            hits[m] += 1
+
+    ranked = sorted(hits.items(), key=lambda kv: (-kv[1], kv[0] == "/", -len(kv[0]), kv[0]))
+    return [m for m, _ in ranked[:max_mounts]]
 
 
 def read_disk_model(dev: str) -> str:
@@ -528,6 +637,8 @@ def classify_verdict(
     top_cpu: list[dict[str, Any]],
     overlaps: list[dict[str, Any]],
     turnover: dict[str, int],
+    top_io: list[dict[str, Any]] | None = None,
+    d_state_top: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     wa = cpu.get("wa", 0.0)
     busy_cpu = cpu.get("us", 0.0) + cpu.get("sy", 0.0) + cpu.get("ni", 0.0)
@@ -566,6 +677,7 @@ def classify_verdict(
     total_disk_mbs = sum(d["r_mbs"] + d["w_mbs"] for d in (sat_disks or disks))
     worst_w_await = max((d["w_await_ms"] for d in disks), default=0.0)
     worst_util = max((d["util_pct"] for d in disks), default=0.0)
+    worst_aqu = max((d["aqu_sz"] for d in disks), default=0.0)
 
     if bottleneck == "NORMAL_OR_IDLE":
         productivity = "HEALTHY_IDLE_OR_LIGHT"
@@ -575,6 +687,7 @@ def classify_verdict(
             bdp_threads >= 4
             or dirty_gb >= 2.0
             or (worst_util >= 90.0 and worst_w_await >= 100.0)
+            or (worst_w_await >= 250.0 and worst_aqu >= 16.0)
             or mem_thrash
         )
         making_progress = turnover["started"] > 0 or turnover["exited"] > 0 or total_disk_mbs >= 5.0
@@ -609,6 +722,28 @@ def classify_verdict(
                 recommendations.append("Cap Cargo parallelism (e.g. CARGO_BUILD_JOBS=4..8) to avoid SSD writeback collapse.")
         if mem_thrash:
             recommendations.append("Reduce concurrent memory consumers to stop swap/page-cache thrashing.")
+
+        sat_targets = [
+            f"{d['device']}({','.join(m['mount'] for m in d['mounts']) or 'unmounted'})"
+            for d in sat_disks[:2]
+        ]
+        sat_label = ", ".join(sat_targets) if sat_targets else "saturated storage"
+        if productivity == "WEDGED_OR_STALLED":
+            recommendations.append(
+                f"Storage/memory appears stalled on {sat_label}; inspect top D-state PIDs, "
+                "run --progress-check to confirm stall, and check dmesg/NVMe health."
+            )
+        elif productivity == "THRASHING_LOW_EFFICIENCY" and not recommendations:
+            top_writers = [
+                f"{p['pid']}:{p['comm']}"
+                for p in (top_io or [])[:3]
+                if p.get("w_mbs", 0.0) > 0 or p.get("io_total_mbs", 0.0) > 0
+            ]
+            writer_note = f" ({', '.join(top_writers)})" if top_writers else ""
+            recommendations.append(
+                f"Throttle or pause heavy writers{writer_note} targeting {sat_label} "
+                f"(dirty={dirty_gb:.2f} GiB, w_await={worst_w_await:.0f}ms) or run with ionice -c3 / lower parallelism."
+            )
     elif bottleneck == "MEMORY_SWAP_THRASH":
         productivity = "THRASHING_LOW_EFFICIENCY"
         reasons.append(f"Memory PSI some10={mem_some10}%, swap pages delta={swap_pages_delta}, avail={mem['mem_avail_gib']} GiB.")
@@ -626,10 +761,13 @@ def classify_verdict(
             productivity = "PRODUCTIVE_COMPUTE"
             reasons.append(f"CPU actively computing ({busy_cpu:.1f}% busy, iowait={wa:.1f}%, load1={load['load1']:.2f}).")
 
-    if not recommendations:
-        recommendations.append("No immediate intervention needed.")
-
     is_issue = productivity in ("THRASHING_LOW_EFFICIENCY", "WEDGED_OR_STALLED", "SUSPECT_SPIN_LOOP")
+    if not recommendations:
+        if is_issue:
+            recommendations.append("Inspect top offending PIDs and wait channels above; throttle or restart stalled workloads.")
+        else:
+            recommendations.append("No immediate intervention needed.")
+
     return {
         "bottleneck": bottleneck,
         "productivity": productivity,
@@ -639,7 +777,74 @@ def classify_verdict(
     }
 
 
-def investigate(interval: float = 2.0, top_n: int = 10) -> dict[str, Any]:
+def compare_windows(rep1: dict[str, Any], rep2: dict[str, Any]) -> dict[str, Any]:
+    """Compare two consecutive investigation windows to confirm stalls vs transient spikes."""
+    v1 = rep1["verdict"]
+    v2 = rep2["verdict"]
+    dirty_delta = round(rep2["memory"]["dirty_gib"] - rep1["memory"]["dirty_gib"], 2)
+    total_started = rep1["turnover"]["started"] + rep2["turnover"]["started"]
+    total_exited = rep1["turnover"]["exited"] + rep2["turnover"]["exited"]
+
+    d1_pids = {g["pid"] for g in rep1.get("d_state_top", [])}
+    d2_pids = {g["pid"] for g in rep2.get("d_state_top", [])}
+    persistent_d = sorted(d1_pids & d2_pids)
+
+    c1_pids = {p["pid"] for p in rep1.get("top_cpu", []) if p.get("cpu_pct", 0.0) >= 50.0}
+    c2_pids = {p["pid"] for p in rep2.get("top_cpu", []) if p.get("cpu_pct", 0.0) >= 50.0}
+    persistent_cpu = sorted(c1_pids & c2_pids)
+
+    stall_states = ("WEDGED_OR_STALLED", "SUSPECT_SPIN_LOOP")
+    if v1["productivity"] in stall_states and v2["productivity"] in stall_states:
+        status = "CONFIRMED_STALL"
+    elif v1["is_issue"] and v2["is_issue"]:
+        status = "PERSISTENT_THRASH"
+    elif v1["is_issue"] and not v2["is_issue"]:
+        status = "RECOVERING"
+    elif not v1["is_issue"] and v2["is_issue"]:
+        status = "WORSENING"
+    elif v2["bottleneck"] == "NORMAL_OR_IDLE":
+        status = "IDLE"
+    else:
+        status = "STEADY_PROGRESS"
+
+    sign = "+" if dirty_delta >= 0 else ""
+    summary = (
+        f"{status}: w1={v1['productivity']} -> w2={v2['productivity']}; "
+        f"dirty_delta={sign}{dirty_delta:.2f} GiB; "
+        f"turnover=+{total_started}/-{total_exited}; "
+        f"persistent_d_pids={len(persistent_d)}, persistent_cpu_pids={len(persistent_cpu)}."
+    )
+    return {
+        "windows": 2,
+        "status": status,
+        "window1_verdict": {
+            "bottleneck": v1["bottleneck"],
+            "productivity": v1["productivity"],
+            "is_issue": v1["is_issue"],
+        },
+        "window2_verdict": {
+            "bottleneck": v2["bottleneck"],
+            "productivity": v2["productivity"],
+            "is_issue": v2["is_issue"],
+        },
+        "dirty_gib_delta": dirty_delta,
+        "total_turnover": {"started": total_started, "exited": total_exited},
+        "persistent_d_pids": persistent_d,
+        "persistent_cpu_pids": persistent_cpu,
+        "summary": summary,
+    }
+
+
+def append_jsonl_log(path: str | Path, rep: dict[str, Any]) -> None:
+    """Append one deterministic compact JSON line to PATH, creating parent directories if needed."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(rep, sort_keys=True, separators=(",", ":")) + "\n"
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(line)
+
+
+def investigate(interval: float = 2.0, top_n: int = 10, no_statvfs: bool = False) -> dict[str, Any]:
     ts_start = time.monotonic()
     cpu0 = read_cpu_times()
     disk0 = read_diskstats()
@@ -659,9 +864,11 @@ def investigate(interval: float = 2.0, top_n: int = 10) -> dict[str, Any]:
     load = read_loadavg()
     psi = read_psi()
     mem = read_meminfo()
-    mount_map = map_disks_to_mounts()
+    mount_map = map_disks_to_mounts(allow_statvfs=not no_statvfs)
     disks = compute_disk_deltas(disk0, disk1, dt_sec, mount_map)
     gpus = read_gpu_busy()
+
+    all_mount_points = sorted({m["mount"] for mlist in mount_map.values() for m in mlist})
 
     swap_delta = (max(0, swap1[0] - swap0[0]), max(0, swap1[1] - swap0[1]))
     pids0, pids1 = set(procs0.keys()), set(procs1.keys())
@@ -735,6 +942,20 @@ def investigate(interval: float = 2.0, top_n: int = 10) -> dict[str, Any]:
         reverse=True,
     )[:top_n]
     d_groups.sort(key=lambda x: (x["threads"], x["comm"], x["pid"]), reverse=True)
+    d_state_top = d_groups[:top_n]
+
+    # Bounded mount attribution only for top I/O and D-state offenders (avoids scanning all PIDs).
+    pid_mount_cache: dict[int, list[str]] = {}
+    for row in d_state_top:
+        pid = row["pid"]
+        if pid not in pid_mount_cache:
+            pid_mount_cache[pid] = attribute_pid_mounts(pid, all_mount_points)
+        row["mounts"] = pid_mount_cache[pid]
+    for row in top_io:
+        pid = row["pid"]
+        if pid not in pid_mount_cache:
+            pid_mount_cache[pid] = attribute_pid_mounts(pid, all_mount_points)
+        row["mounts"] = pid_mount_cache[pid]
 
     overlaps = detect_overlapping_workloads(procs1, uptime)
     verdict = classify_verdict(
@@ -749,6 +970,8 @@ def investigate(interval: float = 2.0, top_n: int = 10) -> dict[str, Any]:
         top_cpu=top_cpu,
         overlaps=overlaps,
         turnover=turnover,
+        top_io=top_io,
+        d_state_top=d_state_top,
     )
 
     return {
@@ -763,11 +986,23 @@ def investigate(interval: float = 2.0, top_n: int = 10) -> dict[str, Any]:
         "disks": disks,
         "gpus": gpus,
         "d_state_wchans": dict(d_wchan_counts.most_common(10)),
-        "d_state_top": d_groups[:top_n],
+        "d_state_top": d_state_top,
         "top_cpu": top_cpu,
         "top_io": top_io,
         "overlapping_workloads": overlaps[:top_n],
     }
+
+
+def investigate_progress(
+    interval: float = 2.0,
+    top_n: int = 10,
+    no_statvfs: bool = False,
+) -> dict[str, Any]:
+    """Run two consecutive windows and attach stall/progress comparison to the second report."""
+    rep1 = investigate(interval=interval, top_n=top_n, no_statvfs=no_statvfs)
+    rep2 = investigate(interval=interval, top_n=top_n, no_statvfs=no_statvfs)
+    rep2["progress_check"] = compare_windows(rep1, rep2)
+    return rep2
 
 
 def render_text(rep: dict[str, Any], markdown: bool = False) -> str:
@@ -833,10 +1068,11 @@ def render_text(rep: dict[str, Any], markdown: bool = False) -> str:
         lines.append(h(f"Blocked (D-State) Threads (total={l['d_threads']})"))
         if rep["d_state_wchans"]:
             lines.append("Wchans: " + ", ".join(f"{k}={v}" for k, v in rep["d_state_wchans"].items()))
-        lines.append(f"{'THRD':>5} {'PID':>8} {'ELAPSED':>10} {'COMM':<16} {'WCHAN':<24} CMD")
+        lines.append(f"{'THRD':>5} {'PID':>8} {'ELAPSED':>10} {'COMM':<16} {'WCHAN':<24} {'MOUNTS':<14} CMD")
         for g in rep["d_state_top"]:
+            mnts = ",".join(g.get("mounts") or []) or "-"
             lines.append(
-                f"{g['threads']:>5} {g['pid']:>8} {g['elapsed']:>10} {g['comm']:<16} {g['wchan']:<24} {g['cmdline'][:90]}"
+                f"{g['threads']:>5} {g['pid']:>8} {g['elapsed']:>10} {g['comm']:<16} {g['wchan']:<24} {mnts:<14} {g['cmdline'][:80]}"
             )
         lines.append("")
 
@@ -852,11 +1088,12 @@ def render_text(rep: dict[str, Any], markdown: bool = False) -> str:
 
     if rep["top_io"]:
         lines.append(h("Top Process I/O (readable /proc/*/io)"))
-        lines.append(f"{'PID':>8} {'W_MB/s':>8} {'R_MB/s':>8} {'WCH_M/s':>8} {'ELAPSED':>10} {'COMM':<16} CMD")
+        lines.append(f"{'PID':>8} {'W_MB/s':>8} {'R_MB/s':>8} {'WCH_M/s':>8} {'ELAPSED':>10} {'COMM':<16} {'MOUNTS':<14} CMD")
         for p in rep["top_io"]:
+            mnts = ",".join(p.get("mounts") or []) or "-"
             lines.append(
                 f"{p['pid']:>8} {p['w_mbs']:>8.2f} {p['r_mbs']:>8.2f} {p['wchar_mbs']:>8.2f} "
-                f"{p['elapsed']:>10} {p['comm']:<16} {p['cmdline'][:80]}"
+                f"{p['elapsed']:>10} {p['comm']:<16} {mnts:<14} {p['cmdline'][:72]}"
             )
         lines.append("")
 
@@ -868,6 +1105,17 @@ def render_text(rep: dict[str, Any], markdown: bool = False) -> str:
             )
             for t in o["sample_trees"][:2]:
                 lines.append(f"    tree: {t}")
+        lines.append("")
+
+    if rep.get("progress_check"):
+        pc = rep["progress_check"]
+        lines.append(h("Progress Check (2 windows)"))
+        lines.append(f"Status: {pc['status']}")
+        lines.append(f"Detail: {pc['summary']}")
+        if pc["persistent_d_pids"]:
+            lines.append(f"Persistent D-state PIDs: {pc['persistent_d_pids'][:10]}")
+        if pc["persistent_cpu_pids"]:
+            lines.append(f"Persistent >=50% CPU PIDs: {pc['persistent_cpu_pids'][:10]}")
         lines.append("")
 
     lines.append(h("Recommendations"))
@@ -909,6 +1157,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Repeat investigation COUNT times (0 or omitted = run until Ctrl-C)",
     )
     p.add_argument(
+        "--progress-check",
+        action="store_true",
+        help="Run two consecutive sampling windows to confirm whether load/stalls are progressing or wedged",
+    )
+    p.add_argument(
+        "--no-statvfs",
+        action="store_true",
+        help="Skip os.statvfs() mount fill checks (extra protection when storage mounts are hung)",
+    )
+    p.add_argument(
+        "--append-log",
+        metavar="PATH",
+        default=None,
+        help="Append each report as a compact JSONL line to PATH (creates parent directories if needed)",
+    )
+    p.add_argument(
         "--exit-on-issue",
         action="store_true",
         help="Exit with code 3 when bottleneck is thrashing, wedged, or suspected spin loop",
@@ -936,7 +1200,9 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"config: interval={args.interval}s top={args.top} "
             f"format={'json' if args.json else 'markdown' if args.markdown else 'text'} "
-            f"watch={args.watch} exit_on_issue={args.exit_on_issue}",
+            f"watch={args.watch} progress_check={args.progress_check} "
+            f"no_statvfs={args.no_statvfs} append_log={args.append_log} "
+            f"exit_on_issue={args.exit_on_issue}",
             file=sys.stderr,
         )
 
@@ -945,8 +1211,13 @@ def main(argv: list[str] | None = None) -> int:
     last_issue = False
     try:
         while runs == 0 or i < runs:
-            rep = investigate(interval=args.interval, top_n=args.top)
+            if args.progress_check:
+                rep = investigate_progress(interval=args.interval, top_n=args.top, no_statvfs=args.no_statvfs)
+            else:
+                rep = investigate(interval=args.interval, top_n=args.top, no_statvfs=args.no_statvfs)
             last_issue = bool(rep["verdict"]["is_issue"])
+            if args.append_log:
+                append_jsonl_log(args.append_log, rep)
             if args.json:
                 print(json.dumps(rep, indent=2, sort_keys=True), flush=True)
             else:

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -47,6 +48,47 @@ class TestCLISmoke(unittest.TestCase):
         self.assertEqual(r.returncode, 0, msg=r.stderr)
         self.assertIn("# System Investigation @", r.stdout)
         self.assertIn("## Recommendations", r.stdout)
+
+    def test_live_no_statvfs_progress_check_and_append_log(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            log_file = Path(td) / "logs" / "telemetry.jsonl"
+            r = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--interval",
+                    "0.2",
+                    "--top",
+                    "5",
+                    "--no-statvfs",
+                    "--progress-check",
+                    "--append-log",
+                    str(log_file),
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(r.returncode, 0, msg=r.stderr)
+            data = json.loads(r.stdout)
+            self.assertIn("progress_check", data)
+            self.assertIn(
+                data["progress_check"]["status"],
+                {"CONFIRMED_STALL", "PERSISTENT_THRASH", "RECOVERING", "WORSENING", "STEADY_PROGRESS", "IDLE"},
+            )
+            for disk in data["disks"]:
+                for mnt in disk["mounts"]:
+                    self.assertIsNone(mnt["used_pct"])
+            for row in data["top_io"] + data["d_state_top"]:
+                self.assertIn("mounts", row)
+                self.assertIsInstance(row["mounts"], list)
+
+            lines = log_file.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 1)
+            logged = json.loads(lines[0])
+            self.assertEqual(logged["timestamp"], data["timestamp"])
+            self.assertEqual(logged["progress_check"]["status"], data["progress_check"]["status"])
 
 
 if __name__ == "__main__":
