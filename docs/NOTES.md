@@ -30,6 +30,10 @@
    - `map_disks_to_mounts()` skips non-local/FUSE/network/automount filesystems (`is_safe_statvfs_fstype`) before calling `os.statvfs(mnt)` and supports `--no-statvfs` for zero-`statvfs` operation during severe storage hangs.
 5. **Bounded `/proc/<pid>/{cwd,fd}` mount attribution (v0.2.0):**
    - Only runs on the selected `top_io` + `d_state_top` PIDs (cached per PID, capped at `max_fds=128`) using `os.readlink()`, which reads kernel dentry paths from memory without touching target filesystems.
+6. **Self-contained companion CLIs (v0.3.0):**
+   - Each tool (`sys-investigate`, `sys-io-guard`, `sys-mem-watch`, `sys-disk-hogs`) stays 100% standalone stdlib-only with zero intra-package imports so `scripts/install.sh` copies directly into `~/.local/bin` on root NVMe.
+   - `sys-io-guard` places lockfiles and holder `.meta` files under `$XDG_RUNTIME_DIR/sys-io-guard` (tmpfs) or `/tmp/sys-io-guard-<uid>`, never on the guarded secondary SSD, and resolves `/dev/mapper/*` / `dm-*` via `/sys/block/dm-*/slaves` without shelling out.
+   - `sys-investigate` v0.3.0 reads NVMe controller temperatures/thresholds directly from `/sys/class/nvme/nvme*/hwmon*/temp*_*` (millidegrees C -> °C) and bounds `/proc/<pid>/cgroup` parsing strictly to displayed top rows + `--diagnose-pid`.
 
 ### Dead Ends & Gotchas Observed
 - `ps %cpu` reports **lifetime average** CPU, not instantaneous CPU — misleading for long-lived processes or newly spawned bursts. Always use two-snapshot `/proc/<pid>/stat` tick deltas (`utime + stime`).

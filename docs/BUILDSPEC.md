@@ -1,85 +1,63 @@
-# As-Built Buildspec — sysadmin-tools (`sys-investigate` v0.2.0)
+# As-Built Buildspec — sysadmin-tools v0.3.0
 
-Derived directly from live source (`src/sysadmin_tools/sys_investigate.py`, 2026-11-21).
+Derived directly from live source (`src/sysadmin_tools/*.py`, 2026-11-21).
 
 ## 1. Purpose & Non-Negotiable Design Properties
 
-`sysadmin-tools` provides fast, deterministic, zero-dependency Linux diagnostic CLIs that answer *"what is driving CPU/load right now, and is it productive?"*
+`sysadmin-tools` provides fast, deterministic, zero-dependency Linux diagnostic and guard CLIs that stay responsive during severe CPU, memory, or storage stalls.
 
 **Non-negotiable invariants (a rebuild that drops these is invalid):**
 1. **Zero third-party dependencies:** Python 3.10+ standard library only.
-2. **Zero external CLI dependencies on the sampling path:** all telemetry comes from `/proc` and `/sys` directly (no `top`, `iostat`, `vmstat`, `ps`, `lsblk` subprocesses).
-3. **Resilient under severe storage stalls:** installed binary is a standalone file on root filesystem (`~/.local/bin/sys-investigate`), never a symlink into a secondary data mount.
-4. **Two-snapshot delta accuracy:** CPU %, disk utilization/latency/throughput, swap paging, per-process `%CPU`, per-process disk MB/s, and process turnover (`+started/-exited`) are all computed strictly over the measured `[t0, t1]` wall-clock interval (`time.monotonic()`).
-5. **Graceful permission handling:** unreadable `/proc/<pid>/io` or vanished short-lived PIDs are skipped cleanly without tracebacks.
-6. **Script-first UX:** data to `stdout`, diagnostics/verbose config to `stderr`; deterministic JSON (`sort_keys=True`); documented exit codes (`0`, `1`, `2`, `3`).
+2. **Self-contained standalone scripts:** each CLI in `src/sysadmin_tools/*.py` uses zero cross-module imports so `scripts/install.sh` can `install -m 0755` direct copies into `~/.local/bin` on root NVMe without `PYTHONPATH` or symlinks to secondary disks.
+3. **Zero external CLI subprocesses on hot diagnostic paths:** `sys-investigate`, `sys-mem-watch`, `sys-disk-hogs`, and `sys-io-guard` disk resolution read `/proc`, `/sys`, and `os.scandir`/`fcntl.flock` directly (no `top`, `iostat`, `vmstat`, `ps`, `lsblk`, `df`, `du`, `smartctl`, or `nvme` subprocesses).
+4. **Two-snapshot delta accuracy:** CPU %, disk utilization/latency/throughput, swap paging, per-process `%CPU`, RSS/swap growth, disk MB/s, and process turnover are computed strictly over measured `[t0, t1]` wall-clock intervals (`time.monotonic()`).
+5. **Mount-stall resilience:** `os.statvfs()` skips non-local/FUSE/network/automount filesystems automatically and can be disabled via `--no-statvfs`; `sys-io-guard` stores locks on tmpfs/root (`$XDG_RUNTIME_DIR` or `/tmp`), never on secondary storage.
+6. **Script-first UX:** data to `stdout`, diagnostics/verbose config to `stderr`; deterministic JSON (`sort_keys=True`); single-line stderr errors without tracebacks; documented exit codes.
 
-## 2. Stack & Target Environment
+## 2. Stack & Packaging
 
-- **OS:** Linux (kernel with `/proc/stat`, `/proc/loadavg`, `/proc/meminfo`, `/proc/vmstat`, `/proc/diskstats`, `/proc/mounts`, `/proc/<pid>/*`, optional `/proc/pressure/*` PSI and `/sys/class/drm/card*/device/gpu_busy_percent`).
+- **OS:** Linux (`/proc`, `/sys`, `fcntl.flock`).
 - **Runtime:** Python `>=3.10` (stdlib only).
-- **Packaging:** `pyproject.toml` (`setuptools`), console script `sys-investigate = sysadmin_tools.sys_investigate:main`, plus direct copy installer `scripts/install.sh`.
+- **Packaging:** `pyproject.toml` (`setuptools`, v0.3.0) with console scripts `sys-investigate`, `sys-io-guard`, `sys-mem-watch`, `sys-disk-hogs`, plus direct-copy installer `scripts/install.sh`.
 
-## 3. Module Map & Signatures
+## 3. Tool Contracts & Module Map
 
-### `src/sysadmin_tools/sys_investigate.py`
-
-| Symbol | Signature / Role |
-|---|---|
-| `read_cpu_times()` | `() -> list[int]` — parses aggregate `cpu ` jiffies from `/proc/stat` |
-| `compute_cpu_pct(t0, t1)` | `(list[int], list[int]) -> dict[str, float]` — returns `us, ni, sy, id, wa, hi, si, st` % |
-| `read_loadavg()` | `() -> dict[str, Any]` — `load1, load5, load15, runnable_kernel, entities_total, cpus` |
-| `read_psi()` | `() -> dict` — parses `/proc/pressure/{cpu,io,memory}` `some`/`full` avg10/60/300 |
-| `read_meminfo()` | `() -> dict[str, float]` — total/avail/free GiB, `dirty_gib`/`dirty_mib`, `writeback_mib`, swap |
-| `read_vmstat_swap()` | `() -> tuple[int, int]` — `(pswpin, pswpout)` cumulative pages |
-| `is_whole_physical_disk(name)` | `(str) -> bool` — filters out loop/ram/zram/dm/sr/fd and partitions (`nvme*p*`, `sd*[0-9]`, `mmcblk*p*`) |
-| `read_diskstats()` | `() -> dict[str, dict[str, int]]` — parses `/proc/diskstats` for whole physical disks |
-| `is_safe_statvfs_fstype(fstype)` | `(str) -> bool` — rejects non-local/FUSE/network/automount filesystems (`nfs*`, `cifs`, `sshfs`, `fuse*`, `autofs`, etc.) before `os.statvfs()` |
-| `map_disks_to_mounts(allow_statvfs=True, mounts_txt=None)` | `(bool, str \| None) -> dict[str, list[dict]]` — maps parent disk -> mountpoints + fstype + safe `statvfs` `used_pct` (skipped when `allow_statvfs=False` or non-local fstype) |
-| `resolve_mount_for_path(path, mount_points)` | `(str, list[str]) -> str \| None` — deepest-prefix mount match ignoring `/proc`, `/sys`, `/dev`, `/run`, sockets/pipes, and stripping ` (deleted)` |
-| `attribute_pid_mounts(pid, mount_points, max_fds=128, max_mounts=3, proc_root="/proc")` | Inspects `/proc/<pid>/cwd` and bounded `/proc/<pid>/fd/*` via `os.readlink()` (zero target-FS I/O) to attribute active mounts for top offenders |
-| `compute_disk_deltas(d0, d1, dt_sec, mount_map)` | Computes `r_iops, w_iops, r_mbs, w_mbs, r_await_ms, w_await_ms, aqu_sz, in_flight, util_pct`, sorted by `(util_pct, aqu_sz, throughput)` desc |
-| `read_gpu_busy()` | `() -> list[dict]` — reads AMD DRM `/sys/class/drm/card*/device/gpu_busy_percent` |
-| `parse_proc_stat(stat_txt)` | Handles arbitrary spaces/parens in `comm` via `find("(")` / `rfind(")")`; returns `(comm, state, ppid, utime, stime, starttime)` |
-| `snapshot_procs(inspect_threads=True)` | Scans `/proc/<pid>/{stat,cmdline,statm,io}` and (when `inspect_threads=True`) `/proc/<pid>/task/<tid>/{stat,wchan}` for `D` and `R` thread counts |
-| `build_ancestry(pid, snaps, uptime, max_depth=8)` | Formats `pid:comm(elapsed) <- ...` up to `ppid <= 1` |
-| `detect_overlapping_workloads(snaps, uptime)` | Groups concurrent shell scripts (`script:<basename>`, threshold `>=2`) and build/test tools (`tool:cargo/pytest/make/ninja` `>=2`; `rustc/rust-lld` `>=4`) with ancestry trees |
-| `classify_verdict(..., top_io=None, d_state_top=None)` | Deterministic rule engine returning `{bottleneck, productivity, is_issue, reasons, recommendations}`; guarantees actionable recommendations whenever `is_issue=True` |
-| `compare_windows(rep1, rep2)` | Pure two-window comparator returning `{windows, status, window1_verdict, window2_verdict, dirty_gib_delta, total_turnover, persistent_d_pids, persistent_cpu_pids, summary}` |
-| `append_jsonl_log(path, rep)` | Appends one deterministic compact JSONL record (`sort_keys=True, separators=(",", ":")`) creating parent directories if needed |
-| `investigate(interval=2.0, top_n=10, no_statvfs=False)` | Orchestrates `[t0 -> sleep(interval) -> t1]` capture, bounded mount attribution for `top_io` + `d_state_top`, and returns full structured report dict |
-| `investigate_progress(interval=2.0, top_n=10, no_statvfs=False)` | Runs two consecutive `investigate()` windows and attaches `progress_check` via `compare_windows()` |
-| `render_text(rep, markdown=False)` | Formats human-readable ASCII or GitHub Markdown report including `MOUNTS` attribution and optional `Progress Check (2 windows)` section |
-| `main(argv=None)` | Parses CLI flags (`--interval`, `--top`, `--json`, `--markdown`, `--watch`, `--progress-check`, `--no-statvfs`, `--append-log`, `--exit-on-issue`, `--verbose`), validates bounds, enforces exit codes |
-
-### Verdict Classification Rules (`classify_verdict`)
-
-- **Trigger thresholds:**
-  - `sat_disks`: `util_pct >= 85` OR `w_await_ms >= 50` OR `aqu_sz >= 8`
-  - `io_bound`: `wa >= 20%` OR `io_some10 >= 30%` OR `bool(sat_disks)` OR `d_state_total >= 16`
-  - `mem_thrash`: `mem_some10 >= 20%` OR `swap_pages_delta >= 1000` OR `mem_avail_gib < 1.0`
-  - `cpu_bound`: `us + sy + ni >= 70%` OR `cpu_some10 >= 30%`
-- **Bottleneck states:** `MEMORY_SWAP_AND_IO_THRASH`, `MEMORY_SWAP_THRASH`, `MIXED_CPU_AND_IO`, `IO_WAIT_SATURATION`, `CPU_COMPUTE_BOUND`, `NORMAL_OR_IDLE`.
-- **Productivity states:**
-  - `WEDGED_OR_STALLED` (`is_issue=True`): thrashing (`balance_dirty_pages >= 4` OR `dirty_gib >= 2.0` OR `util >= 90% & w_await >= 100ms` OR `w_await >= 250ms & aqu_sz >= 16` OR `mem_thrash`) AND zero turnover AND `< 5 MB/s` throughput.
-  - `THRASHING_LOW_EFFICIENCY` (`is_issue=True`): thrashing with slow forward progress.
-  - `SUSPECT_SPIN_LOOP` (`is_issue=True`): CPU-bound with long-running (`>= 300s`) `>= 95%` CPU consumer doing `0 MB/s` I/O and zero process turnover.
-  - `PRODUCTIVE_IO` / `PRODUCTIVE_COMPUTE` / `HEALTHY_IDLE_OR_LIGHT` (`is_issue=False`).
+### 3.1 `sys-investigate` (`src/sysadmin_tools/sys_investigate.py`)
+- **Core telemetry:** `/proc/stat`, `/proc/loadavg`, `/proc/pressure/{cpu,io,memory}`, `/proc/meminfo`, `/proc/vmstat`, `/proc/diskstats`, `/proc/mounts`, `/proc/<pid>/{stat,cmdline,statm,io,status,oom_score,cgroup,cwd,fd/*,task/*}`, `/sys/class/drm/card*/device/gpu_busy_percent`, `/sys/class/nvme/nvme*/{model,state,hwmon*/temp*_*}`, `/sys/class/thermal/thermal_zone*/{type,temp}`.
+- **Key functions:** `read_cpu_times`, `compute_cpu_pct`, `read_loadavg`, `read_psi`, `read_meminfo`, `read_vmstat_swap`, `is_whole_physical_disk`, `read_diskstats`, `is_safe_statvfs_fstype`, `map_disks_to_mounts`, `resolve_mount_for_path`, `attribute_pid_mounts`, `parse_cgroup_text`, `read_proc_cgroup`, `read_nvme_health`, `read_thermal_zones`, `compute_disk_deltas`, `read_gpu_busy`, `parse_proc_stat`, `snapshot_procs`, `build_ancestry`, `detect_overlapping_workloads`, `classify_verdict`, `compare_windows`, `append_jsonl_log`, `investigate`, `investigate_progress`, `inspect_pid_threads`, `classify_pid_verdict`, `investigate_pid`, `render_text`, `render_pid_text`, `main`.
+- **Verdict rules:**
+  - `sat_disks`: `util_pct >= 85` OR `w_await_ms >= 50` OR `aqu_sz >= 8`.
+  - `thrashing`: `balance_dirty_pages >= 4` OR `dirty_gib >= 2.0` OR (`util >= 90%` & `w_await >= 100ms`) OR (`w_await >= 250ms` & `aqu_sz >= 16`) OR `mem_thrash`.
+  - `NVMe thermal`: `CRITICAL` (`alarm=True`, `temp_c >= temp_crit_c`, or `state != "live"`) forces `is_issue=True` and adds a thermal recommendation; `WARM` (`temp_c >= temp_max_c` or `>= 70°C`) adds a warning reason & recommendation.
   - Invariant: `is_issue=True` never emits `"No immediate intervention needed."`.
+- **CLI flags:** `--interval` (0.2..60.0, env `SYS_INVESTIGATE_INTERVAL`), `--top` (1..100, env `SYS_INVESTIGATE_TOP`), `--json` / `--markdown`, `--watch [COUNT]`, `--progress-check`, `--diagnose-pid PID`, `--no-statvfs`, `--append-log PATH`, `--exit-on-issue`, `--verbose`.
+- **Exit codes:** `0` ok, `1` validation/missing-PID/runtime error, `2` argparse error, `3` issue detected with `--exit-on-issue`.
 
-### CLI Contract & Exit Codes
+### 3.2 `sys-io-guard` (`src/sysadmin_tools/sys_io_guard.py`)
+- **Core mechanics:** resolves `--path` (default `$CARGO_TARGET_DIR` or cwd) via `/proc/mounts` (+ `/sys/block/dm-*/slaves`) to parent physical disk (`nvme2n1`, `sda`, `mmcblk0`) or `mnt-<sha1[:8]>` fallback; acquires advisory `fcntl.flock` in `$SYS_IO_GUARD_LOCK_DIR` / `$XDG_RUNTIME_DIR/sys-io-guard` / `/tmp/sys-io-guard-<uid>`; writes atomic `.meta` holder JSON (`pid`, `ppid`, `cmd`, `lock_key`, `target_path`, `started_at`); runs command directly without shell (`subprocess.run`) with `CARGO_BUILD_JOBS` cap and optional `os.nice`.
+- **CLI flags:** `--path DIR`, `--lock-key NAME`, `--lock-dir DIR`, `--timeout SEC`, `--cargo-jobs N` (env `SYS_IO_GUARD_CARGO_JOBS`, default `min(8, max(2, cpus // 4))`, `0` disables), `--nice N` (0..19, default `10`), `--env KEY=VAL` (repeatable), `--status`, `--dry-run`, `--json`, `--verbose`, `-- COMMAND [ARGS...]`.
+- **Exit codes:** child exit code on command execution; `0` for `--status`/`--dry-run`; `1` validation/runtime error; `2` argparse error; `4` lock busy/timeout.
 
-- Precedence: CLI flag > environment variable (`SYS_INVESTIGATE_INTERVAL`, `SYS_INVESTIGATE_TOP`) > built-in default (`2.0`, `10`).
-- Validation bounds: `0.2 <= interval <= 60.0`, `1 <= top <= 100`, `watch >= 0`.
-- Exit codes: `0` ok, `1` validation/runtime error (single-line stderr, no traceback), `2` argparse usage error, `3` issue detected when `--exit-on-issue` is passed.
+### 3.3 `sys-mem-watch` (`src/sysadmin_tools/sys_mem_watch.py`)
+- **Core telemetry:** two-snapshot `/proc` reads of `/proc/meminfo`, `/proc/vmstat` (`pswpin`, `pswpout`, `pgscan_*`, `pgsteal_*`, `oom_kill`), `/proc/pressure/memory`, and `/proc/<pid>/{stat,cmdline,status,oom_score,oom_score_adj,cgroup}`.
+- **Ranked outputs:** `top_rss`, `top_growers` (`rss_delta_mib > 0`), `top_swap` (`swap_mib > 0`), `top_oom_risk` (`oom_score`, `rss_mib`).
+- **Verdict statuses:** `OOM_IMMINENT`, `SWAP_THRASHING`, `RAPID_GROWTH_LEAK_RISK`, `HIGH_MEMORY_PRESSURE`, `HEALTHY` (`is_issue = status != "HEALTHY"`, never emits `"No immediate intervention needed."` when `is_issue=True`).
+- **CLI flags:** `--interval` (0.2..60.0, env `SYS_MEM_WATCH_INTERVAL`), `--top` (1..100, env `SYS_MEM_WATCH_TOP`), `--json` / `--markdown`, `--watch [COUNT]`, `--append-log PATH`, `--exit-on-issue`, `--verbose`.
+- **Exit codes:** `0` ok, `1` validation/runtime error, `2` argparse error, `3` issue detected with `--exit-on-issue`.
+
+### 3.4 `sys-disk-hogs` (`src/sysadmin_tools/sys_disk_hogs.py`)
+- **Core mechanics:** iterative stack-based `os.scandir()` post-order walker (`follow_symlinks=False`), hardlink deduplication by `(st_dev, st_ino)` when `st_nlink > 1`, single-filesystem default (`st_dev` check, opt-out via `--cross-mounts`), safe `os.statvfs()` gated by `/proc/mounts` fstype check and `--no-statvfs`.
+- **Hog categories:** `rust-target`, `node-modules`, `python-venv`, `python-cache`, `build-artifacts`, `general-cache` (reclaimable, outer-hog rollup prevents nested double-counting), plus `vcs-metadata` (`.git`, tracked separately and excluded from `reclaimable_bytes`).
+- **CLI flags:** `paths` (default `["."]`), `--top` (1..100, default `15`), `--depth` (1..10, default `2`), `--min-mib` (default `1.0`), `--min-file-mib` (default `10.0`), `--cross-mounts`, `--no-statvfs`, `--json` / `--markdown`, `--verbose`.
+- **Exit codes:** `0` ok, `1` validation/missing-path/runtime error, `2` argparse error.
 
 ## 4. Known Pitfalls & Fixed Bugs
 
-- **Sum all disks when `sat_disks` is empty:** rolling PSI (`io_some10`) can stay elevated seconds after disk util drops below 85%. `total_disk_mbs` must fall back to `disks` (`sat_disks or disks`) so throughput is never falsely reported as `0.0 MB/s`.
-- **High write latency + deep queue under <90% util:** an SSD draining a deep queue (`aqu_sz >= 16`, `w_await >= 250ms`) while `util_pct` briefly dips to ~82% and `dirty_gib < 2.0` must still classify as `THRASHING_LOW_EFFICIENCY`, not `PRODUCTIVE_IO`.
-- **Non-empty actionable recommendations on all issue verdicts:** single-process I/O thrashing (without overlapping script groups) previously fell through to `"No immediate intervention needed."`. `classify_verdict()` now guarantees targeted writer/mount recommendations whenever `is_issue=True`.
-- **Kernel thread/comm parsing:** always bracket `comm` with first `(` and last `)`.
-- **Distinguish `write_bytes` from `wchar`:** GUI terminals/IPC generate hundreds of MB/s of `wchar` without touching disk.
+- **Sum all disks when `sat_disks` is empty:** rolling PSI (`io_some10`) can stay elevated seconds after disk util drops below 85%; fall back to `sat_disks or disks`.
+- **High write latency + deep queue under <90% util:** an SSD draining `aqu_sz >= 16` at `w_await >= 250ms` while `util_pct` dips to ~82% must still classify as `THRASHING_LOW_EFFICIENCY`.
+- **Actionable recommendations on all issue verdicts:** guaranteed across both `sys-investigate` and `sys-mem-watch`.
+- **Kernel `comm` parsing:** always bracket with first `(` and last `)`.
+- **Distinguish `write_bytes` from `wchar`:** avoids misattributing terminal/IPC chatter to disk saturation.
 - **Avoid blocking `os.statvfs()` on non-local mounts:** skip `fuse*`, `nfs*`, `cifs`, `sshfs`, `autofs`, etc. automatically and offer `--no-statvfs`.
 
 ## 5. Verification Commands
@@ -88,16 +66,12 @@ Derived directly from live source (`src/sysadmin_tools/sys_investigate.py`, 2026
 cd ~/src/sysadmin/sysadmin-tools
 ./scripts/verify.sh
 ./scripts/install.sh --dry-run
-sys-investigate --interval 1 --top 5 --progress-check --verbose
 ```
 
-## 6. Expansion Roadmap (Candidates for Next Session)
+Verified counts (2026-11-21): `syntax` PASS (13 Python files), `unit` PASS (77 tests), `smoke` PASS (12 tests) — **89 tests total**.
 
-1. **Companion tools in `sysadmin-tools`:**
-   - `sys-mem-watch`: RSS/swap growth & OOM-risk investigator.
-   - `sys-io-guard`: lock/serialize wrapper for heavy local builds (`flock` per target SSD + `CARGO_BUILD_JOBS` cap).
-   - `sys-disk-hogs`: fast workspace/target/cache disk usage analyzer.
-2. **Additional `sys-investigate` telemetry:**
-   - `--diagnose-pid PID`: focused single-process/tree drill-down.
-   - NVMe/SMART & thermal telemetry (`/sys/class/nvme/*/hwmon*`, temperature/throttling).
-   - Cgroup/container attribution (`/proc/<pid>/cgroup`).
+## 6. Future Expansion Candidates
+
+- `sys-systemd-watch`: failed/restarting systemd units, journal burst rate, and service resource pressure via `/proc` + cgroup v2 `memory.current`/`cpu.stat` (zero subprocesses).
+- `sys-net-watch`: pure `/proc/net/{dev,tcp,tcp6,udp,snmp,softnet_stat}` socket state & retransmit/drop delta investigator.
+- `sys-investigate --diff-log PATH`: summarize and diff trends across `--append-log` JSONL files.

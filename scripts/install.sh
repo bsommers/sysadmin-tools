@@ -38,22 +38,35 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-SRC="${REPO_ROOT}/src/sysadmin_tools/sys_investigate.py"
-DST="${PREFIX}/sys-investigate"
+TOOLS=(
+  "sys_investigate.py:sys-investigate"
+  "sys_io_guard.py:sys-io-guard"
+  "sys_mem_watch.py:sys-mem-watch"
+  "sys_disk_hogs.py:sys-disk-hogs"
+)
 
-if [[ ! -f "$SRC" ]]; then
-  echo "error: source script not found: $SRC" >&2
-  exit 1
+for entry in "${TOOLS[@]}"; do
+  src_file="${entry%%:*}"
+  bin_name="${entry##*:}"
+  SRC="${REPO_ROOT}/src/sysadmin_tools/${src_file}"
+  DST="${PREFIX}/${bin_name}"
+  if [[ ! -f "$SRC" ]]; then
+    echo "error: source script not found: $SRC" >&2
+    exit 1
+  fi
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "[dry-run] install -m 0755 '$SRC' '$DST'"
+  else
+    mkdir -p "$PREFIX"
+    install -m 0755 "$SRC" "$DST"
+    echo "Installed: $DST"
+  fi
+done
+
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  echo "Next steps:"
+  echo "  sys-investigate --help"
+  echo "  sys-io-guard --help"
+  echo "  sys-mem-watch --help"
+  echo "  sys-disk-hogs --help"
 fi
-
-if [[ "$DRY_RUN" -eq 1 ]]; then
-  echo "[dry-run] install -m 0755 '$SRC' '$DST'"
-  exit 0
-fi
-
-mkdir -p "$PREFIX"
-install -m 0755 "$SRC" "$DST"
-echo "Installed: $DST"
-echo "Next steps:"
-echo "  sys-investigate --help"
-echo "  sys-investigate --interval 2"

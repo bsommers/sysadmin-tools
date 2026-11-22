@@ -77,11 +77,15 @@ run_stage() {
 
 cd "$REPO_ROOT"
 
-run_stage syntax python3 -m py_compile \
-  src/sysadmin_tools/__init__.py \
-  src/sysadmin_tools/sys_investigate.py \
-  tests/unit/test_sys_investigate.py \
-  tests/smoke/test_cli_smoke.py
+shopt -s nullglob
+PY_FILES=(
+  src/sysadmin_tools/*.py
+  tests/unit/test_*.py
+  tests/smoke/test_*.py
+)
+shopt -u nullglob
+
+run_stage syntax python3 -m py_compile "${PY_FILES[@]}"
 
 if [[ "$TIER" == "all" || "$TIER" == "unit" ]]; then
   if [[ -n "$MATCH" ]]; then
