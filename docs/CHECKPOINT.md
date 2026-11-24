@@ -1,30 +1,39 @@
-# Checkpoint — sysadmin-tools v0.3.0 (full roadmap suite) — 2026-11-21
+# Checkpoint — sysadmin-tools v0.4.0 Release & Full Documentation Suite — 2026-11-22
 
-**Status:** COMPLETE — all roadmap items implemented, verified, installed, and pushed to `origin/main`
+**Status:** COMPLETE — local `v0.4.0` annotated tag created; awaiting user confirmation to push `main` and `v0.4.0` to `origin`
 
 ## Done (with evidence)
-- Created public GitHub remote `https://github.com/bsommers/sysadmin-tools.git` and pushed `main`.
-- Implemented all roadmap items in order (zero third-party deps, standalone Python 3.10+ stdlib executables):
-  1. **`sys-io-guard`** (`src/sysadmin_tools/sys_io_guard.py`): per-disk `fcntl.flock` build serializer using `/proc/mounts` + `/sys/block/dm-*/slaves`, tmpfs/root lock dir, `.meta` holder inspection (`--status`), `--dry-run`, `--timeout` (exit `4`), `CARGO_BUILD_JOBS` cap, `--nice`, `--env`. (13 unit + 2 smoke tests)
-  2. **`sys-mem-watch`** (`src/sysadmin_tools/sys_mem_watch.py`): pure `/proc` two-snapshot RSS/swap growth, reclaim/PSI, and OOM-risk investigator with 5-status classifier, `--watch`, `--append-log`, `--exit-on-issue`. (21 unit + 3 smoke tests)
-  3. **`sys-disk-hogs`** (`src/sysadmin_tools/sys_disk_hogs.py`): pure-stdlib iterative `os.scandir` analyzer with hardlink dedup, single-filesystem default (`--one-file-system`), safe `statvfs` / `--no-statvfs`, regenerable build/cache hog classification (`rust-target`, `node-modules`, `python-venv`, `python-cache`, `build-artifacts`, `general-cache`), and non-reclaimable `.git` tracking. (15 unit + 3 smoke tests)
-  4. **`sys-investigate` v0.3.0** (`src/sysadmin_tools/sys_investigate.py`): added cgroup/container attribution (`docker:`, `podman:`, `containerd:`, `systemd:`), pure `/sys` NVMe/SMART thermal telemetry + thermal alerting in `classify_verdict`, and `--diagnose-pid PID` single-process/subtree drill-down. (28 unit + 4 smoke tests)
-- Updated packaging & scripts: `pyproject.toml` (v0.3.0, all 4 console scripts), `src/sysadmin_tools/__init__.py`, `scripts/install.sh` (installs all 4 standalone copies), `scripts/verify.sh` (auto-discovers all Python files).
-- Updated docs: `README.md`, `docs/BUILDSPEC.md`, `docs/NOTES.md`, `docs/CHECKPOINT.md`.
-- Verified locally via `./scripts/verify.sh`: `syntax` PASS (0s), `unit` PASS (77 tests in 2.955s), `smoke` PASS (12 tests in 6.003s) — **89/89 tests passing**.
-- Installed all 4 standalone CLIs into `~/.local/bin/{sys-investigate,sys-io-guard,sys-mem-watch,sys-disk-hogs}` via `./scripts/install.sh` and verified byte-identical parity (`diff -u` exit `0` for all 4).
+- Verified `sys-crash-triage` (`v0.4.0`, 5th standalone CLI) and all 4 existing CLIs via `./scripts/verify.sh`:
+  - `syntax`: PASS (1s)
+  - `unit`: PASS (91 tests in 3.321s)
+  - `smoke`: PASS (15 tests in 6.837s)
+  - Total: **106/106 tests passing**.
+- Reinstalled all 5 standalone CLIs to `~/.local/bin/{sys-investigate,sys-io-guard,sys-mem-watch,sys-disk-hogs,sys-crash-triage}` via `./scripts/install.sh` with byte-identical parity (`diff -u` exit `0` for all 5).
+- Built reproducible brand, icon, and visual showcase kit (`scripts/render_assets.py`):
+  - Hero banner: `docs/assets/logo.svg` + `docs/assets/logo.png` (`1200x360`)
+  - Square icon: `assets/logo.svg` + `assets/logo.png` + `docs/assets/icon.svg` (`512x512`)
+  - 5 tool icons: `docs/assets/icons/icon-{investigate,io-guard,mem-watch,disk-hogs,crash-triage}.svg` (`64x64`)
+  - 2 showcase graphics: `docs/assets/examples/{architecture-overview,incident-triage-workflow}.svg` (`1120x440`)
+- Authored full documentation suite and 6-chapter User's Guide:
+  - Root `README.md` with hero banner, badges, icon-linked 5-tool table, visual showcase gallery, quickstart, CLI reference, and docs index.
+  - Core docs: `docs/{README,purpose,architecture,running,how-to,BUILDSPEC}.md`.
+  - User's Guide: `docs/user-guide/{README,01-getting-started,02-live-system-investigation,03-preventing-io-storms,04-memory-and-disk-auditing,05-post-crash-forensics,06-automation-and-troubleshooting}.md`.
+  - Multi-format diagrams: `docs/diagrams/{README.md,ascii_architecture.txt,architecture.mmd,execution_flow.mmd,verdict_states.mmd,architecture.drawio,execution_flow.drawio,storage_and_isolation.drawio}`.
+  - Release history: `CHANGELOG.md` (`v0.1.0` through `v0.4.0`).
+- Validated all 13 XML files (10 SVGs + 3 `.drawio`) with `xml.etree.ElementTree.parse` and all 18 Markdown files for relative link integrity (`0` broken links, `0` absolute `/home/` paths).
+- Created clean atomic commits and local annotated tag `v0.4.0`.
 
 ## Working-Tree & Git State
 - Repo path: `~/src/sysadmin/sysadmin-tools`
 - Remote: `origin` -> `https://github.com/bsommers/sysadmin-tools.git`
-- Branch: `main` (clean, pushed to `origin/main`).
+- Branch: `main` (local commits + annotated tag `v0.4.0` ready to push).
 - No background processes/watchers running.
 
 ## Next Steps (exact commands, in order)
-1. Verify repo & installed CLI health:
+1. Push `main` and annotated tag `v0.4.0` once confirmed:
    ```bash
    cd ~/src/sysadmin/sysadmin-tools
-   git status -sb
-   ./scripts/verify.sh
+   git push origin main
+   git push origin v0.4.0
    ```
-2. Optional future expansions from `docs/BUILDSPEC.md` §6 (`sys-systemd-watch`, `sys-net-watch`, or `sys-investigate --diff-log`).
+2. Optional: create GitHub Release from tag `v0.4.0` (`gh release create v0.4.0 --notes-from-tag`).
