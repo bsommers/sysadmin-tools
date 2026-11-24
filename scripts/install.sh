@@ -43,6 +43,7 @@ TOOLS=(
   "sys_io_guard.py:sys-io-guard"
   "sys_mem_watch.py:sys-mem-watch"
   "sys_disk_hogs.py:sys-disk-hogs"
+  "sys_crash_triage.py:sys-crash-triage"
 )
 
 for entry in "${TOOLS[@]}"; do
@@ -69,4 +70,5 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
   echo "  sys-io-guard --help"
   echo "  sys-mem-watch --help"
   echo "  sys-disk-hogs --help"
+  echo "  sys-crash-triage --help"
 fi
