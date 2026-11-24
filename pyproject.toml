@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sysadmin-tools"
-version = "0.4.0"
+version = "0.5.0"
 description = "Zero-dependency Linux sysadmin investigation and diagnostics CLIs."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,6 +16,8 @@ sys-io-guard = "sysadmin_tools.sys_io_guard:main"
 sys-mem-watch = "sysadmin_tools.sys_mem_watch:main"
 sys-disk-hogs = "sysadmin_tools.sys_disk_hogs:main"
 sys-crash-triage = "sysadmin_tools.sys_crash_triage:main"
+sys-net-watch = "sysadmin_tools.sys_net_watch:main"
+sys-systemd-watch = "sysadmin_tools.sys_systemd_watch:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

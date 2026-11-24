@@ -1,0 +1,14 @@
+[Unit]
+Description=sysadmin-tools periodic system investigation sampler
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/sysadmin-tools
+ExecStart=%h/.local/bin/sys-investigate --interval 1 --watch 1 --append-log %h/.local/state/sysadmin-tools/investigate.jsonl --no-statvfs
+Nice=10
+IOSchedulingClass=best-effort
+TimeoutStartSec=30
+MemoryMax=128M
+
+[Install]
+WantedBy=default.target

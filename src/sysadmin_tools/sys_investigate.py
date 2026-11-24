@@ -11,6 +11,9 @@ Examples:
   sys-investigate --watch 5 --interval 2
   sys-investigate --progress-check --interval 2
   sys-investigate --append-log /var/tmp/sys-investigate.jsonl --no-statvfs
+  sys-investigate --diff-log /var/tmp/sys-investigate.jsonl
+  sys-investigate --diff-log /var/tmp/sys-investigate.jsonl --diff-window 5 --json
+  sys-investigate --diff-log /var/tmp/after.jsonl --diff-baseline /var/tmp/before.jsonl
   sys-investigate --exit-on-issue --json > /tmp/diag.json
   sys-investigate --diagnose-pid 12345 --interval 2
 """
@@ -30,6 +33,8 @@ from pathlib import Path
 from typing import Any
 
 # Pure-procfs implementation: avoids fork/exec and disk I/O during severe stalls.
+
+VERSION = "0.5.0"
 
 SECTOR_BYTES = 512
 CLK_TCK = os.sysconf(os.sysconf_names["SC_CLK_TCK"]) if hasattr(os, "sysconf") else 100
@@ -1113,6 +1118,736 @@ def append_jsonl_log(path: str | Path, rep: dict[str, Any]) -> None:
         f.write(line)
 
 
+_SNAPSHOT_MARKER_KEYS = frozenset({"verdict", "cpu_pct", "memory", "load", "disks", "timestamp"})
+_DIFF_METRICS: tuple[tuple[str, int], ...] = (
+    ("cpu_busy_pct", 1),
+    ("cpu_wa_pct", 1),
+    ("load1", 2),
+    ("d_threads", 1),
+    ("dirty_gib", 2),
+    ("mem_avail_gib", 2),
+    ("swap_used_pct", 1),
+    ("max_disk_util_pct", 1),
+    ("max_w_await_ms", 1),
+    ("max_aqu_sz", 2),
+    ("io_psi_some10", 1),
+    ("mem_psi_some10", 1),
+)
+
+
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    if isinstance(val, bool) or val is None:
+        return default
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(val: Any, default: int = 0) -> int:
+    if isinstance(val, bool) or val is None:
+        return default
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def load_jsonl_log(path: str | Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Load JSONL snapshots from PATH, skipping blank lines and recording corrupt lines."""
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"log file not found: {p}")
+    if p.is_dir():
+        raise IsADirectoryError(f"log path is a directory: {p}")
+
+    snapshots: list[dict[str, Any]] = []
+    corrupt: list[dict[str, Any]] = []
+    with open(p, "r", encoding="utf-8", errors="replace") as f:
+        for lineno, raw in enumerate(f, start=1):
+            s = raw.strip()
+            if not s:
+                continue
+            try:
+                obj = json.loads(s)
+            except json.JSONDecodeError as exc:
+                corrupt.append({"line": lineno, "error": exc.msg})
+                continue
+            if not isinstance(obj, dict):
+                corrupt.append({"line": lineno, "error": f"expected JSON object, got {type(obj).__name__}"})
+                continue
+            if not any(k in obj for k in _SNAPSHOT_MARKER_KEYS):
+                corrupt.append({"line": lineno, "error": "JSON object missing snapshot telemetry keys"})
+                continue
+            snapshots.append(obj)
+    return snapshots, corrupt
+
+
+def _parse_iso_timestamp(ts: Any) -> dt.datetime | None:
+    if not isinstance(ts, str) or not ts.strip():
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(ts.strip().replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed
+    except ValueError:
+        return None
+
+
+def _extract_snapshot_metrics(rep: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a single JSONL snapshot into flat numeric and verdict fields."""
+    verdict = rep.get("verdict") if isinstance(rep.get("verdict"), dict) else {}
+    bottleneck = str(verdict.get("bottleneck") or verdict.get("status") or "UNKNOWN")
+    productivity = str(verdict.get("productivity") or verdict.get("status") or "UNKNOWN")
+    is_issue = bool(verdict.get("is_issue", False))
+
+    cpu = rep.get("cpu_pct") if isinstance(rep.get("cpu_pct"), dict) else {}
+    cpu_busy = round(
+        _safe_float(cpu.get("us")) + _safe_float(cpu.get("sy")) + _safe_float(cpu.get("ni")),
+        1,
+    )
+    cpu_wa = round(_safe_float(cpu.get("wa")), 1)
+
+    load = rep.get("load") if isinstance(rep.get("load"), dict) else {}
+    load1 = round(_safe_float(load.get("load1")), 2)
+    d_threads = _safe_int(load.get("d_threads"))
+    if d_threads == 0 and isinstance(rep.get("threads"), dict):
+        d_threads = _safe_int(rep["threads"].get("d_threads"))
+
+    mem = rep.get("memory") if isinstance(rep.get("memory"), dict) else {}
+    dirty_gib = round(_safe_float(mem.get("dirty_gib")), 2)
+    mem_avail_gib = round(_safe_float(mem.get("mem_avail_gib")), 2)
+    swap_used_pct = round(_safe_float(mem.get("swap_used_pct")), 1)
+
+    psi = rep.get("psi") if isinstance(rep.get("psi"), dict) else {}
+    io_psi = _safe_float(
+        psi.get("io", {}).get("some", {}).get("avg10") if isinstance(psi.get("io"), dict) else 0.0
+    )
+    mem_psi = _safe_float(
+        psi.get("memory", {}).get("some", {}).get("avg10") if isinstance(psi.get("memory"), dict) else 0.0
+    )
+
+    disks_raw = rep.get("disks") if isinstance(rep.get("disks"), list) else []
+    per_disk: dict[str, dict[str, float]] = {}
+    max_util = 0.0
+    max_util_dev = "-"
+    max_w_await = 0.0
+    max_w_await_dev = "-"
+    max_aqu = 0.0
+    max_aqu_dev = "-"
+    for d in disks_raw:
+        if not isinstance(d, dict):
+            continue
+        dev = str(d.get("device") or "unknown")
+        util = round(_safe_float(d.get("util_pct")), 1)
+        w_await = round(_safe_float(d.get("w_await_ms")), 1)
+        aqu = round(_safe_float(d.get("aqu_sz")), 2)
+        per_disk[dev] = {"util_pct": util, "w_await_ms": w_await, "aqu_sz": aqu}
+        if util > max_util or max_util_dev == "-":
+            max_util = util
+            max_util_dev = dev
+        if w_await > max_w_await or max_w_await_dev == "-":
+            max_w_await = w_await
+            max_w_await_dev = dev
+        if aqu > max_aqu or max_aqu_dev == "-":
+            max_aqu = aqu
+            max_aqu_dev = dev
+
+    nvme_raw = rep.get("nvme_health") if isinstance(rep.get("nvme_health"), list) else []
+    max_nvme_temp: float | None = None
+    max_nvme_ctrl: str | None = None
+    for n in nvme_raw:
+        if not isinstance(n, dict):
+            continue
+        tc = n.get("temp_c")
+        if tc is None or isinstance(tc, bool):
+            continue
+        val = round(_safe_float(tc), 1)
+        if max_nvme_temp is None or val > max_nvme_temp:
+            max_nvme_temp = val
+            max_nvme_ctrl = str(n.get("controller") or "nvme")
+
+    ts = str(rep.get("timestamp") or "")
+    return {
+        "timestamp": ts,
+        "verdict": {
+            "bottleneck": bottleneck,
+            "productivity": productivity,
+            "is_issue": is_issue,
+        },
+        "cpu_busy_pct": cpu_busy,
+        "cpu_wa_pct": cpu_wa,
+        "load1": load1,
+        "d_threads": float(d_threads),
+        "dirty_gib": dirty_gib,
+        "mem_avail_gib": mem_avail_gib,
+        "swap_used_pct": swap_used_pct,
+        "max_disk_util_pct": max_util,
+        "max_disk_util_dev": max_util_dev,
+        "max_w_await_ms": max_w_await,
+        "max_w_await_dev": max_w_await_dev,
+        "max_aqu_sz": max_aqu,
+        "max_aqu_dev": max_aqu_dev,
+        "io_psi_some10": round(io_psi, 1),
+        "mem_psi_some10": round(mem_psi, 1),
+        "per_disk": per_disk,
+        "max_nvme_temp_c": max_nvme_temp,
+        "max_nvme_ctrl": max_nvme_ctrl,
+    }
+
+
+def _compute_cohort_averages(extracted: list[dict[str, Any]]) -> dict[str, float]:
+    n = len(extracted)
+    if n == 0:
+        return {k: 0.0 for k, _ in _DIFF_METRICS}
+    return {
+        key: round(sum(item[key] for item in extracted) / n, digits)
+        for key, digits in _DIFF_METRICS
+    }
+
+
+def _compute_metric_deltas(before: dict[str, Any], after: dict[str, Any]) -> dict[str, dict[str, float]]:
+    out: dict[str, dict[str, float]] = {}
+    for key, digits in _DIFF_METRICS:
+        b = round(float(before[key]), digits)
+        a = round(float(after[key]), digits)
+        out[key] = {"before": b, "after": a, "delta": round(a - b, digits)}
+    return out
+
+
+def _summarize_extracted_log(
+    extracted: list[dict[str, Any]],
+    corrupt: list[dict[str, Any]],
+) -> dict[str, Any]:
+    n = len(extracted)
+    first_ts = extracted[0]["timestamp"] if n else ""
+    last_ts = extracted[-1]["timestamp"] if n else ""
+    t0 = _parse_iso_timestamp(first_ts)
+    t1 = _parse_iso_timestamp(last_ts)
+    span_sec = round((t1 - t0).total_seconds(), 1) if (t0 is not None and t1 is not None) else None
+
+    bn_counts: Counter[str] = Counter()
+    pr_counts: Counter[str] = Counter()
+    issue_count = 0
+    for item in extracted:
+        v = item["verdict"]
+        bn_counts[v["bottleneck"]] += 1
+        pr_counts[v["productivity"]] += 1
+        if v["is_issue"]:
+            issue_count += 1
+
+    def _peak_max(key: str, dev_key: str | None = None) -> dict[str, Any]:
+        best = max(extracted, key=lambda x: x[key])
+        res: dict[str, Any] = {"value": best[key], "timestamp": best["timestamp"]}
+        if dev_key:
+            res["device"] = best[dev_key]
+        return res
+
+    min_avail = min(extracted, key=lambda x: x["mem_avail_gib"])
+    peaks: dict[str, Any] = {
+        "dirty_gib": _peak_max("dirty_gib"),
+        "w_await_ms": _peak_max("max_w_await_ms", "max_w_await_dev"),
+        "disk_util_pct": _peak_max("max_disk_util_pct", "max_disk_util_dev"),
+        "aqu_sz": _peak_max("max_aqu_sz", "max_aqu_dev"),
+        "cpu_busy_pct": _peak_max("cpu_busy_pct"),
+        "cpu_wa_pct": _peak_max("cpu_wa_pct"),
+        "load1": _peak_max("load1"),
+        "d_threads": {"value": int(max(extracted, key=lambda x: x["d_threads"])["d_threads"]), "timestamp": max(extracted, key=lambda x: x["d_threads"])["timestamp"]},
+        "min_mem_avail_gib": {"value": min_avail["mem_avail_gib"], "timestamp": min_avail["timestamp"]},
+        "swap_used_pct": _peak_max("swap_used_pct"),
+        "io_psi_some10": _peak_max("io_psi_some10"),
+    }
+    nvme_samples = [x for x in extracted if x["max_nvme_temp_c"] is not None]
+    if nvme_samples:
+        hot = max(nvme_samples, key=lambda x: float(x["max_nvme_temp_c"]))
+        peaks["nvme_temp_c"] = {
+            "value": hot["max_nvme_temp_c"],
+            "controller": hot["max_nvme_ctrl"],
+            "timestamp": hot["timestamp"],
+        }
+
+    return {
+        "snapshot_count": n,
+        "corrupt_line_count": len(corrupt),
+        "corrupt_lines": corrupt[:10],
+        "time_range": {"first": first_ts, "last": last_ts, "span_sec": span_sec},
+        "issue_count": issue_count,
+        "issue_rate_pct": round(100.0 * issue_count / n, 1) if n else 0.0,
+        "verdict_distribution": {
+            "bottleneck": dict(sorted(bn_counts.items())),
+            "productivity": dict(sorted(pr_counts.items())),
+        },
+        "averages": _compute_cohort_averages(extracted),
+        "peaks": peaks,
+    }
+
+
+def _compute_disk_cohort_deltas(
+    baseline: list[dict[str, Any]],
+    recent: list[dict[str, Any]],
+    all_target: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    devs: set[str] = set()
+    for grp in (baseline, recent, all_target):
+        for item in grp:
+            devs.update(item["per_disk"].keys())
+
+    rows: list[dict[str, Any]] = []
+    for dev in sorted(devs):
+        b_vals = [x["per_disk"][dev] for x in baseline if dev in x["per_disk"]]
+        r_vals = [x["per_disk"][dev] for x in recent if dev in x["per_disk"]]
+        t_vals = [x["per_disk"][dev] for x in all_target if dev in x["per_disk"]]
+        b_util = round(sum(v["util_pct"] for v in b_vals) / len(b_vals), 1) if b_vals else 0.0
+        r_util = round(sum(v["util_pct"] for v in r_vals) / len(r_vals), 1) if r_vals else 0.0
+        b_wait = round(sum(v["w_await_ms"] for v in b_vals) / len(b_vals), 1) if b_vals else 0.0
+        r_wait = round(sum(v["w_await_ms"] for v in r_vals) / len(r_vals), 1) if r_vals else 0.0
+        peak_util = max((v["util_pct"] for v in t_vals), default=0.0)
+        peak_wait = max((v["w_await_ms"] for v in t_vals), default=0.0)
+        peak_aqu = max((v["aqu_sz"] for v in t_vals), default=0.0)
+        rows.append(
+            {
+                "device": dev,
+                "baseline_avg_util_pct": b_util,
+                "recent_avg_util_pct": r_util,
+                "util_delta_pct": round(r_util - b_util, 1),
+                "baseline_avg_w_await_ms": b_wait,
+                "recent_avg_w_await_ms": r_wait,
+                "w_await_delta_ms": round(r_wait - b_wait, 1),
+                "peak_util_pct": peak_util,
+                "peak_w_await_ms": peak_wait,
+                "peak_aqu_sz": peak_aqu,
+            }
+        )
+    rows.sort(
+        key=lambda r: (abs(r["w_await_delta_ms"]), abs(r["util_delta_pct"]), r["peak_util_pct"]),
+        reverse=True,
+    )
+    return rows
+
+
+def _collect_recurring_offenders(snapshots: list[dict[str, Any]], top_n: int = 10) -> dict[str, Any]:
+    wchan_totals: Counter[str] = Counter()
+    d_comms: Counter[str] = Counter()
+    io_comms: Counter[str] = Counter()
+    cpu_comms: Counter[str] = Counter()
+    overlap_groups: Counter[str] = Counter()
+
+    for rep in snapshots:
+        wchans = rep.get("d_state_wchans")
+        if isinstance(wchans, dict):
+            for k, v in wchans.items():
+                wchan_totals[str(k)] += _safe_int(v)
+        for row in rep.get("d_state_top") or []:
+            if isinstance(row, dict) and row.get("comm"):
+                d_comms[str(row["comm"])] += max(1, _safe_int(row.get("threads"), 1))
+        for row in rep.get("top_io") or []:
+            if isinstance(row, dict) and row.get("comm"):
+                io_comms[str(row["comm"])] += 1
+        for row in rep.get("top_cpu") or []:
+            if isinstance(row, dict) and row.get("comm") and _safe_float(row.get("cpu_pct")) >= 20.0:
+                cpu_comms[str(row["comm"])] += 1
+        for o in rep.get("overlapping_workloads") or []:
+            if isinstance(o, dict) and o.get("group"):
+                overlap_groups[str(o["group"])] += 1
+
+    return {
+        "d_state_wchans": dict(wchan_totals.most_common(top_n)),
+        "d_state_comms": [{"comm": c, "hits": n} for c, n in d_comms.most_common(top_n)],
+        "io_comms": [{"comm": c, "snapshots": n} for c, n in io_comms.most_common(top_n)],
+        "cpu_comms": [{"comm": c, "snapshots": n} for c, n in cpu_comms.most_common(top_n)],
+        "overlapping_groups": [{"group": g, "snapshots": n} for g, n in overlap_groups.most_common(top_n)],
+    }
+
+
+def classify_log_trend(
+    comparison_mode: str,
+    snapshot_count: int,
+    earliest: dict[str, Any],
+    latest: dict[str, Any],
+    baseline_issue_rate_pct: float,
+    recent_issue_rate_pct: float,
+    avg_deltas: dict[str, dict[str, float]],
+    peaks: dict[str, Any],
+) -> dict[str, Any]:
+    """Classify overall health trend across a JSONL telemetry log or baseline-vs-target pair."""
+    earliest_issue = bool(earliest["verdict"]["is_issue"])
+    latest_issue = bool(latest["verdict"]["is_issue"])
+    issue_rate_delta = round(recent_issue_rate_pct - baseline_issue_rate_pct, 1)
+
+    reasons: list[str] = []
+    recommendations: list[str] = []
+
+    if comparison_mode == "single_file" and snapshot_count == 1:
+        if latest_issue:
+            status = "SINGLE_SNAPSHOT_ISSUE"
+            reasons.append(
+                f"Single snapshot recorded an active issue: {latest['verdict']['bottleneck']} / "
+                f"{latest['verdict']['productivity']}."
+            )
+            recommendations.append(
+                "Capture additional snapshots with --append-log or run live --progress-check to confirm persistence."
+            )
+        else:
+            status = "SINGLE_SNAPSHOT_HEALTHY"
+            reasons.append(
+                f"Single snapshot was healthy ({latest['verdict']['bottleneck']} / "
+                f"{latest['verdict']['productivity']}); trend requires >=2 snapshots."
+            )
+            recommendations.append("No immediate intervention needed.")
+        return {
+            "status": status,
+            "is_issue": latest_issue,
+            "reasons": reasons,
+            "recommendations": recommendations,
+        }
+
+    # Check material metric degradation between baseline and recent cohorts.
+    degradation_signals: list[str] = []
+    d_dirty = avg_deltas["dirty_gib"]
+    if d_dirty["delta"] >= 1.5 and d_dirty["after"] >= 2.0:
+        degradation_signals.append(f"avg dirty backlog rose {d_dirty['before']:.2f} -> {d_dirty['after']:.2f} GiB")
+    d_wait = avg_deltas["max_w_await_ms"]
+    if d_wait["delta"] >= 50.0 and d_wait["after"] >= 50.0:
+        degradation_signals.append(f"avg peak w_await rose {d_wait['before']:.1f} -> {d_wait['after']:.1f} ms")
+    d_util = avg_deltas["max_disk_util_pct"]
+    if d_util["delta"] >= 20.0 and d_util["after"] >= 85.0:
+        degradation_signals.append(f"avg peak disk util rose {d_util['before']:.1f}% -> {d_util['after']:.1f}%")
+    d_wa = avg_deltas["cpu_wa_pct"]
+    if d_wa["delta"] >= 15.0 and d_wa["after"] >= 20.0:
+        degradation_signals.append(f"avg CPU iowait rose {d_wa['before']:.1f}% -> {d_wa['after']:.1f}%")
+    d_mem = avg_deltas["mem_avail_gib"]
+    if d_mem["delta"] <= -4.0 and d_mem["after"] < 2.0:
+        degradation_signals.append(f"avg available memory dropped {d_mem['before']:.2f} -> {d_mem['after']:.2f} GiB")
+    d_dth = avg_deltas["d_threads"]
+    if d_dth["delta"] >= 8.0 and d_dth["after"] >= 12.0:
+        degradation_signals.append(f"avg D-state threads rose {d_dth['before']:.1f} -> {d_dth['after']:.1f}")
+
+    if (
+        (not earliest_issue and latest_issue)
+        or (issue_rate_delta >= 20.0 and recent_issue_rate_pct > 0.0)
+        or bool(degradation_signals)
+    ):
+        status = "DEGRADING"
+    elif latest_issue and (baseline_issue_rate_pct >= 50.0 or earliest_issue):
+        status = "PERSISTENT_ISSUE"
+    elif latest_issue:
+        status = "DEGRADING"
+    elif (baseline_issue_rate_pct > 0.0 or earliest_issue) and recent_issue_rate_pct < baseline_issue_rate_pct and recent_issue_rate_pct < 50.0:
+        status = "RECOVERING"
+    elif recent_issue_rate_pct >= 25.0 or baseline_issue_rate_pct >= 25.0:
+        status = "INTERMITTENT_ISSUES"
+    else:
+        status = "STABLE_HEALTHY"
+
+    is_issue = (
+        latest_issue
+        or status in ("DEGRADING", "PERSISTENT_ISSUE")
+        or (status == "INTERMITTENT_ISSUES" and recent_issue_rate_pct >= 50.0)
+    )
+
+    reasons.append(
+        f"Issue rate shifted {baseline_issue_rate_pct:.1f}% -> {recent_issue_rate_pct:.1f}% "
+        f"(latest={latest['verdict']['bottleneck']}/{latest['verdict']['productivity']})."
+    )
+    if degradation_signals:
+        reasons.append("Degradation signals: " + "; ".join(degradation_signals) + ".")
+    if peaks["dirty_gib"]["value"] >= 2.0 or peaks["w_await_ms"]["value"] >= 100.0:
+        reasons.append(
+            f"Observed peaks: dirty={peaks['dirty_gib']['value']:.2f} GiB, "
+            f"w_await={peaks['w_await_ms']['value']:.1f} ms ({peaks['w_await_ms'].get('device', '-')}), "
+            f"util={peaks['disk_util_pct']['value']:.1f}%."
+        )
+
+    if status == "DEGRADING":
+        recommendations.append(
+            "Performance is degrading across the sampled log; inspect peak writers, D-state wchans, and serialize heavy disk workloads."
+        )
+    elif status == "PERSISTENT_ISSUE":
+        recommendations.append(
+            "Bottleneck persisted across both baseline and recent windows; throttle concurrent I/O/CPU jobs (e.g. sys-io-guard) and inspect recurring offenders."
+        )
+    elif status == "RECOVERING":
+        recommendations.append(
+            "Recent window shows recovery from earlier issues; continue monitoring briefly to confirm stability."
+        )
+    elif status == "INTERMITTENT_ISSUES":
+        recommendations.append(
+            "Intermittent spikes occurred during the log window; correlate spike timestamps with scheduled builds or cron jobs."
+        )
+    else:
+        recommendations.append("No immediate intervention needed.")
+
+    if is_issue and "No immediate intervention needed." in recommendations:
+        recommendations = [
+            "Active or degrading issue detected in telemetry log; inspect top recurring offenders and peak metrics above."
+        ]
+
+    return {
+        "status": status,
+        "is_issue": is_issue,
+        "reasons": reasons,
+        "recommendations": recommendations,
+    }
+
+
+def diff_jsonl_logs(
+    log_path: str | Path,
+    baseline_path: str | Path | None = None,
+    window: int | None = None,
+    top_n: int = 10,
+) -> dict[str, Any]:
+    """Analyze trends across a JSONL log file or diff a baseline log against a target log."""
+    if window is not None and window < 1:
+        raise ValueError("--diff-window N must be >= 1")
+
+    target_raw, target_corrupt = load_jsonl_log(log_path)
+    if not target_raw:
+        raise ValueError(
+            f"no valid snapshots found in {log_path} (corrupt_lines={len(target_corrupt)})"
+        )
+    target_ext = [_extract_snapshot_metrics(r) for r in target_raw]
+    target_summary = _summarize_extracted_log(target_ext, target_corrupt)
+
+    baseline_summary: dict[str, Any] | None = None
+    if baseline_path is not None:
+        comparison_mode = "two_file"
+        base_raw, base_corrupt = load_jsonl_log(baseline_path)
+        if not base_raw:
+            raise ValueError(
+                f"no valid snapshots found in baseline {baseline_path} (corrupt_lines={len(base_corrupt)})"
+            )
+        base_ext = [_extract_snapshot_metrics(r) for r in base_raw]
+        baseline_summary = _summarize_extracted_log(base_ext, base_corrupt)
+
+        if window is not None:
+            baseline_cohort = base_ext[-window:]
+            recent_cohort = target_ext[-window:]
+            baseline_label = f"baseline_last_{len(baseline_cohort)}"
+            recent_label = f"target_last_{len(recent_cohort)}"
+        else:
+            baseline_cohort = base_ext
+            recent_cohort = target_ext
+            baseline_label = f"baseline_all_{len(baseline_cohort)}"
+            recent_label = f"target_all_{len(recent_cohort)}"
+
+        before_snap = base_ext[-1]
+        after_snap = target_ext[-1]
+        before_label = "baseline_latest"
+        after_label = "target_latest"
+    else:
+        comparison_mode = "single_file"
+        n = len(target_ext)
+        if n == 1:
+            baseline_cohort = target_ext
+            recent_cohort = target_ext
+            baseline_label = "single_snapshot"
+            recent_label = "single_snapshot"
+        elif window is not None:
+            if n > window:
+                recent_cohort = target_ext[-window:]
+                baseline_cohort = target_ext[max(0, n - 2 * window) : n - window]
+            else:
+                mid = max(1, n // 2)
+                baseline_cohort = target_ext[:mid]
+                recent_cohort = target_ext[mid:]
+            baseline_label = f"prior_{len(baseline_cohort)}"
+            recent_label = f"last_{len(recent_cohort)}"
+        else:
+            mid = n // 2
+            baseline_cohort = target_ext[:mid]
+            recent_cohort = target_ext[mid:]
+            baseline_label = f"early_half_{len(baseline_cohort)}"
+            recent_label = f"late_half_{len(recent_cohort)}"
+
+        before_snap = target_ext[0]
+        after_snap = target_ext[-1]
+        before_label = "earliest"
+        after_label = "latest"
+
+    b_avg = _compute_cohort_averages(baseline_cohort)
+    r_avg = _compute_cohort_averages(recent_cohort)
+    avg_deltas = _compute_metric_deltas(b_avg, r_avg)
+
+    b_issue_rate = round(
+        100.0 * sum(1 for x in baseline_cohort if x["verdict"]["is_issue"]) / len(baseline_cohort),
+        1,
+    )
+    r_issue_rate = round(
+        100.0 * sum(1 for x in recent_cohort if x["verdict"]["is_issue"]) / len(recent_cohort),
+        1,
+    )
+
+    disk_deltas = _compute_disk_cohort_deltas(baseline_cohort, recent_cohort, target_ext)
+    offenders = _collect_recurring_offenders(target_raw, top_n=top_n)
+    verdict = classify_log_trend(
+        comparison_mode=comparison_mode,
+        snapshot_count=len(target_ext),
+        earliest=before_snap,
+        latest=after_snap,
+        baseline_issue_rate_pct=b_issue_rate,
+        recent_issue_rate_pct=r_issue_rate,
+        avg_deltas=avg_deltas,
+        peaks=target_summary["peaks"],
+    )
+
+    return {
+        "mode": "diff_log",
+        "version": VERSION,
+        "comparison_mode": comparison_mode,
+        "log_path": str(log_path),
+        "baseline_path": str(baseline_path) if baseline_path is not None else None,
+        "window_requested": window,
+        "verdict": verdict,
+        "summary": target_summary,
+        "baseline_summary": baseline_summary,
+        "earliest_vs_latest": {
+            "before_label": before_label,
+            "after_label": after_label,
+            "before_timestamp": before_snap["timestamp"],
+            "after_timestamp": after_snap["timestamp"],
+            "before_verdict": before_snap["verdict"],
+            "after_verdict": after_snap["verdict"],
+            "deltas": _compute_metric_deltas(before_snap, after_snap),
+        },
+        "window_diff": {
+            "baseline_label": baseline_label,
+            "recent_label": recent_label,
+            "baseline_count": len(baseline_cohort),
+            "recent_count": len(recent_cohort),
+            "baseline_issue_rate_pct": b_issue_rate,
+            "recent_issue_rate_pct": r_issue_rate,
+            "issue_rate_delta_pct": round(r_issue_rate - b_issue_rate, 1),
+            "avg_deltas": avg_deltas,
+            "disk_deltas": disk_deltas,
+        },
+        "recurring_offenders": offenders,
+    }
+
+
+def _fmt_signed(val: float, digits: int = 1) -> str:
+    sign = "+" if val >= 0 else ""
+    return f"{sign}{val:.{digits}f}"
+
+
+def render_diff_text(rep: dict[str, Any], markdown: bool = False) -> str:
+    """Format a JSONL log diff & trend report in plain text or Markdown."""
+    v = rep["verdict"]
+    s = rep["summary"]
+    evl = rep["earliest_vs_latest"]
+    wd = rep["window_diff"]
+    peaks = s["peaks"]
+    h = (lambda title: f"## {title}") if markdown else (lambda title: f"=== {title} ===")
+
+    lines: list[str] = []
+    title_prefix = "# " if markdown else ""
+    if rep["baseline_path"]:
+        lines.append(
+            f"{title_prefix}Log Trend Diff: {rep['baseline_path']} -> {rep['log_path']}"
+        )
+    else:
+        lines.append(f"{title_prefix}Log Trend Summary: {rep['log_path']}")
+    lines.append(f"Trend Status: {v['status']} (issue={'YES' if v['is_issue'] else 'no'})")
+    for r in v["reasons"]:
+        lines.append(f"  - {r}")
+    lines.append("")
+
+    lines.append(h("Log Overview & Verdict Distribution"))
+    tr = s["time_range"]
+    span_str = f" ({format_elapsed(tr['span_sec'])})" if tr.get("span_sec") is not None else ""
+    lines.append(
+        f"Snapshots : {s['snapshot_count']} valid | {s['corrupt_line_count']} corrupt skipped | "
+        f"Issues: {s['issue_count']}/{s['snapshot_count']} ({s['issue_rate_pct']:.1f}%)"
+    )
+    if rep.get("baseline_summary"):
+        bs = rep["baseline_summary"]
+        lines.append(
+            f"Baseline  : {bs['snapshot_count']} valid | {bs['corrupt_line_count']} corrupt skipped | "
+            f"Issues: {bs['issue_count']}/{bs['snapshot_count']} ({bs['issue_rate_pct']:.1f}%)"
+        )
+    lines.append(f"Time Range: {tr['first'] or '-'} -> {tr['last'] or '-'}{span_str}")
+    bn_str = ", ".join(f"{k}={cnt}" for k, cnt in s["verdict_distribution"]["bottleneck"].items())
+    pr_str = ", ".join(f"{k}={cnt}" for k, cnt in s["verdict_distribution"]["productivity"].items())
+    lines.append(f"Bottlenecks : {bn_str or '-'}")
+    lines.append(f"Productivity: {pr_str or '-'}")
+    lines.append("")
+
+    lines.append(h("Observed Peaks"))
+    lines.append(
+        f"Dirty={peaks['dirty_gib']['value']:.2f} GiB | "
+        f"W_Await={peaks['w_await_ms']['value']:.1f} ms ({peaks['w_await_ms'].get('device', '-')}) | "
+        f"DiskUtil={peaks['disk_util_pct']['value']:.1f}% ({peaks['disk_util_pct'].get('device', '-')}) | "
+        f"AQU={peaks['aqu_sz']['value']:.2f}"
+    )
+    lines.append(
+        f"CPU Busy={peaks['cpu_busy_pct']['value']:.1f}% | IOWait={peaks['cpu_wa_pct']['value']:.1f}% | "
+        f"Load1={peaks['load1']['value']:.2f} | D-Threads={peaks['d_threads']['value']} | "
+        f"MinMemAvail={peaks['min_mem_avail_gib']['value']:.2f} GiB | Swap={peaks['swap_used_pct']['value']:.1f}%"
+    )
+    if "nvme_temp_c" in peaks:
+        nt = peaks["nvme_temp_c"]
+        lines.append(f"Peak NVMe Temp: {nt['value']:.1f}°C ({nt.get('controller', '-')})")
+    lines.append("")
+
+    lines.append(h(f"Point Diff ({evl['before_label']} -> {evl['after_label']})"))
+    lines.append(
+        f"Verdict: {evl['before_verdict']['bottleneck']}/{evl['before_verdict']['productivity']} -> "
+        f"{evl['after_verdict']['bottleneck']}/{evl['after_verdict']['productivity']}"
+    )
+    lines.append(f"{'METRIC':<20} {'BEFORE':>10} {'AFTER':>10} {'DELTA':>10}")
+    for key, digits in _DIFF_METRICS:
+        d = evl["deltas"][key]
+        lines.append(
+            f"{key:<20} {d['before']:>10.{digits}f} {d['after']:>10.{digits}f} {_fmt_signed(d['delta'], digits):>10}"
+        )
+    lines.append("")
+
+    lines.append(h(f"Window Trend ({wd['baseline_label']} -> {wd['recent_label']})"))
+    lines.append(
+        f"Issue Rate: {wd['baseline_issue_rate_pct']:.1f}% -> {wd['recent_issue_rate_pct']:.1f}% "
+        f"({_fmt_signed(wd['issue_rate_delta_pct'], 1)}%)"
+    )
+    lines.append(f"{'AVG METRIC':<20} {'BASELINE':>10} {'RECENT':>10} {'DELTA':>10}")
+    for key, digits in _DIFF_METRICS:
+        d = wd["avg_deltas"][key]
+        lines.append(
+            f"{key:<20} {d['before']:>10.{digits}f} {d['after']:>10.{digits}f} {_fmt_signed(d['delta'], digits):>10}"
+        )
+    lines.append("")
+
+    if wd["disk_deltas"]:
+        lines.append(h("Per-Disk Trend"))
+        lines.append(
+            f"{'DEV':<10} {'BASE_U%':>8} {'REC_U%':>8} {'DU%':>7} {'BASE_WMS':>9} {'REC_WMS':>9} {'DWMS':>8} {'PK_U%':>7} {'PK_WMS':>8}"
+        )
+        for d in wd["disk_deltas"]:
+            lines.append(
+                f"{d['device']:<10} {d['baseline_avg_util_pct']:>8.1f} {d['recent_avg_util_pct']:>8.1f} "
+                f"{_fmt_signed(d['util_delta_pct'], 1):>7} {d['baseline_avg_w_await_ms']:>9.1f} "
+                f"{d['recent_avg_w_await_ms']:>9.1f} {_fmt_signed(d['w_await_delta_ms'], 1):>8} "
+                f"{d['peak_util_pct']:>7.1f} {d['peak_w_await_ms']:>8.1f}"
+            )
+        lines.append("")
+
+    off = rep["recurring_offenders"]
+    if off["d_state_wchans"] or off["d_state_comms"] or off["io_comms"] or off["cpu_comms"]:
+        lines.append(h("Recurring Offenders"))
+        if off["d_state_wchans"]:
+            lines.append("D-Wchans : " + ", ".join(f"{k}={cnt}" for k, cnt in list(off["d_state_wchans"].items())[:8]))
+        if off["d_state_comms"]:
+            lines.append("D-Comms  : " + ", ".join(f"{x['comm']}({x['hits']})" for x in off["d_state_comms"][:8]))
+        if off["io_comms"]:
+            lines.append("IO-Comms : " + ", ".join(f"{x['comm']}({x['snapshots']})" for x in off["io_comms"][:8]))
+        if off["cpu_comms"]:
+            lines.append("CPU-Comms: " + ", ".join(f"{x['comm']}({x['snapshots']})" for x in off["cpu_comms"][:8]))
+        lines.append("")
+
+    lines.append(h("Recommendations"))
+    for rec in v["recommendations"]:
+        lines.append(f"- {rec}")
+    return "\n".join(lines)
+
+
 def investigate(interval: float = 2.0, top_n: int = 10, no_statvfs: bool = False) -> dict[str, Any]:
     ts_start = time.monotonic()
     cpu0 = read_cpu_times()
@@ -1850,10 +2585,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip os.statvfs() mount fill checks (extra protection when storage mounts are hung)",
     )
     p.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {VERSION}",
+    )
+    p.add_argument(
         "--append-log",
         metavar="PATH",
         default=None,
         help="Append each report as a compact JSONL line to PATH (creates parent directories if needed)",
+    )
+    p.add_argument(
+        "--diff-log",
+        metavar="PATH",
+        default=None,
+        help="Summarize trends and diff snapshots in an --append-log JSONL file (offline mode)",
+    )
+    p.add_argument(
+        "--diff-baseline",
+        metavar="PATH",
+        default=None,
+        help="Baseline JSONL log file to compare against --diff-log PATH",
+    )
+    p.add_argument(
+        "--diff-window",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Compare the last N snapshots against the prior N snapshots (or last N of --diff-baseline)",
     )
     p.add_argument(
         "--diagnose-pid",
@@ -1865,7 +2624,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--exit-on-issue",
         action="store_true",
-        help="Exit with code 3 when bottleneck is thrashing, wedged, or suspected spin loop",
+        help="Exit with code 3 when bottleneck is thrashing, wedged, suspected spin loop, or log trend degrades",
     )
     p.add_argument("--verbose", action="store_true", help="Print effective configuration to stderr")
     return p
@@ -1885,6 +2644,69 @@ def main(argv: list[str] | None = None) -> int:
     if args.watch is not None and args.watch < 0:
         print("error: --watch COUNT must be >= 0", file=sys.stderr)
         return 1
+    if args.diff_baseline is not None and args.diff_log is None:
+        print("error: --diff-baseline requires --diff-log", file=sys.stderr)
+        return 1
+    if args.diff_window is not None:
+        if args.diff_log is None:
+            print("error: --diff-window requires --diff-log", file=sys.stderr)
+            return 1
+        if args.diff_window < 1:
+            print("error: --diff-window N must be >= 1", file=sys.stderr)
+            return 1
+    if args.diff_log is not None:
+        if (
+            args.diagnose_pid is not None
+            or args.progress_check
+            or args.watch is not None
+            or args.append_log is not None
+        ):
+            print(
+                "error: --diff-log cannot be combined with --diagnose-pid, --progress-check, --watch, or --append-log",
+                file=sys.stderr,
+            )
+            return 1
+        if args.verbose:
+            print(
+                f"config: mode=diff_log log={args.diff_log} baseline={args.diff_baseline} "
+                f"window={args.diff_window} top={args.top} "
+                f"format={'json' if args.json else 'markdown' if args.markdown else 'text'} "
+                f"exit_on_issue={args.exit_on_issue}",
+                file=sys.stderr,
+            )
+        try:
+            rep = diff_jsonl_logs(
+                log_path=args.diff_log,
+                baseline_path=args.diff_baseline,
+                window=args.diff_window,
+                top_n=args.top,
+            )
+        except (OSError, ValueError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+
+        for label, path_str, summ in (
+            ("log", args.diff_log, rep["summary"]),
+            ("baseline", args.diff_baseline, rep.get("baseline_summary")),
+        ):
+            if summ and summ["corrupt_line_count"] > 0:
+                line_nums = ", ".join(str(c["line"]) for c in summ["corrupt_lines"][:5])
+                suffix = "..." if summ["corrupt_line_count"] > 5 else ""
+                print(
+                    f"warning: skipped {summ['corrupt_line_count']} corrupt JSON line(s) in {label} "
+                    f"{path_str} (lines {line_nums}{suffix})",
+                    file=sys.stderr,
+                )
+
+        if args.json:
+            print(json.dumps(rep, indent=2, sort_keys=True), flush=True)
+        else:
+            print(render_diff_text(rep, markdown=args.markdown), flush=True)
+
+        if args.exit_on_issue and rep["verdict"]["is_issue"]:
+            return 3
+        return 0
+
     if args.diagnose_pid is not None:
         if args.diagnose_pid <= 0:
             print("error: --diagnose-pid PID must be > 0", file=sys.stderr)

@@ -44,6 +44,8 @@ TOOLS=(
   "sys_mem_watch.py:sys-mem-watch"
   "sys_disk_hogs.py:sys-disk-hogs"
   "sys_crash_triage.py:sys-crash-triage"
+  "sys_net_watch.py:sys-net-watch"
+  "sys_systemd_watch.py:sys-systemd-watch"
 )
 
 for entry in "${TOOLS[@]}"; do
@@ -71,4 +73,6 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
   echo "  sys-mem-watch --help"
   echo "  sys-disk-hogs --help"
   echo "  sys-crash-triage --help"
+  echo "  sys-net-watch --help"
+  echo "  sys-systemd-watch --help"
 fi

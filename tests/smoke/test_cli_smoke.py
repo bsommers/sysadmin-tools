@@ -188,6 +188,68 @@ class TestCLISmoke(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             self.assertEqual(json.loads(lines[0])["target"]["pid"], target_pid)
 
+    def test_live_append_log_then_diff_log_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            log_file = Path(td) / "live_series.jsonl"
+            r_rec = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--interval",
+                    "0.2",
+                    "--top",
+                    "3",
+                    "--watch",
+                    "2",
+                    "--no-statvfs",
+                    "--append-log",
+                    str(log_file),
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(r_rec.returncode, 0, msg=r_rec.stderr)
+
+            r_diff = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--diff-log",
+                    str(log_file),
+                    "--diff-window",
+                    "1",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(r_diff.returncode, 0, msg=r_diff.stderr)
+            data = json.loads(r_diff.stdout)
+            self.assertEqual(data["mode"], "diff_log")
+            self.assertEqual(data["version"], "0.5.0")
+            self.assertEqual(data["summary"]["snapshot_count"], 2)
+            self.assertEqual(data["summary"]["corrupt_line_count"], 0)
+            self.assertIn(
+                data["verdict"]["status"],
+                {"STABLE_HEALTHY", "RECOVERING", "DEGRADING", "PERSISTENT_ISSUE", "INTERMITTENT_ISSUES"},
+            )
+            self.assertEqual(data["window_diff"]["baseline_count"], 1)
+            self.assertEqual(data["window_diff"]["recent_count"], 1)
+
+            r_md = subprocess.run(
+                [sys.executable, str(SCRIPT), "--diff-log", str(log_file), "--markdown"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(r_md.returncode, 0, msg=r_md.stderr)
+            self.assertIn("# Log Trend Summary:", r_md.stdout)
+            self.assertIn("## Observed Peaks", r_md.stdout)
+            self.assertIn("## Recommendations", r_md.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

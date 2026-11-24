@@ -644,12 +644,334 @@ class TestProgressComparison(unittest.TestCase):
         self.assertEqual(si.compare_windows(compute, compute)["status"], "STEADY_PROGRESS")
 
 
+class TestDiffLog(unittest.TestCase):
+    @staticmethod
+    def _make_snapshot(
+        ts: str,
+        bottleneck: str = "NORMAL_OR_IDLE",
+        productivity: str = "HEALTHY_IDLE_OR_LIGHT",
+        is_issue: bool = False,
+        cpu_us: float = 5.0,
+        cpu_wa: float = 0.5,
+        load1: float = 0.5,
+        d_threads: int = 0,
+        dirty_gib: float = 0.05,
+        mem_avail_gib: float = 64.0,
+        swap_used_pct: float = 0.0,
+        util_pct: float = 2.0,
+        w_await_ms: float = 0.5,
+        aqu_sz: float = 0.05,
+        io_psi: float = 0.0,
+        nvme_temp: float | None = 38.0,
+        wchans: dict[str, int] | None = None,
+        d_comm: str | None = None,
+        io_comm: str | None = None,
+    ) -> dict:
+        nvme = (
+            [{"controller": "nvme0", "temp_c": nvme_temp, "thermal_status": "OK"}]
+            if nvme_temp is not None
+            else []
+        )
+        return {
+            "timestamp": ts,
+            "sample_sec": 1.0,
+            "verdict": {
+                "bottleneck": bottleneck,
+                "productivity": productivity,
+                "is_issue": is_issue,
+                "reasons": [],
+                "recommendations": [],
+            },
+            "cpu_pct": {"us": cpu_us, "sy": 1.0, "ni": 0.0, "id": max(0.0, 99.0 - cpu_us - cpu_wa), "wa": cpu_wa, "hi": 0.0, "si": 0.0, "st": 0.0},
+            "load": {"load1": load1, "load5": load1, "load15": load1, "cpus": 32, "r_threads": 1, "d_threads": d_threads},
+            "psi": {"cpu": {"some": {"avg10": 0.0}}, "io": {"some": {"avg10": io_psi}}, "memory": {"some": {"avg10": 0.0}}},
+            "memory": {"mem_total_gib": 128.0, "mem_avail_gib": mem_avail_gib, "dirty_gib": dirty_gib, "swap_used_pct": swap_used_pct},
+            "disks": [{"device": "nvme2n1", "util_pct": util_pct, "w_await_ms": w_await_ms, "r_await_ms": 0.2, "aqu_sz": aqu_sz, "w_mbs": 10.0, "r_mbs": 1.0, "mounts": []}],
+            "nvme_health": nvme,
+            "d_state_wchans": wchans or {},
+            "d_state_top": [{"pid": 100, "comm": d_comm, "threads": max(1, d_threads)}] if d_comm else [],
+            "top_io": [{"pid": 100, "comm": io_comm, "w_mbs": 20.0}] if io_comm else [],
+            "top_cpu": [{"pid": 200, "comm": "rustc", "cpu_pct": cpu_us}] if cpu_us >= 20.0 else [],
+            "overlapping_workloads": [{"group": "tool:cargo", "count": 2}] if is_issue else [],
+        }
+
+    def test_version_constant_and_cli_flag(self) -> None:
+        self.assertEqual(si.VERSION, "0.5.0")
+        r = subprocess.run([sys.executable, str(SCRIPT), "--version"], capture_output=True, text=True, check=False)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("0.5.0", r.stdout)
+
+    def test_load_jsonl_log_skips_blanks_and_records_corrupt_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "mixed.jsonl"
+            s1 = self._make_snapshot("2026-11-23T10:00:00+00:00")
+            s2 = self._make_snapshot("2026-11-23T10:01:00+00:00")
+            p.write_text(
+                "\n"
+                + json.dumps(s1) + "\n"
+                + "   \n"
+                + "{not valid json\n"
+                + "[1, 2, 3]\n"
+                + '{"unrelated": true}\n'
+                + json.dumps(s2) + "\n",
+                encoding="utf-8",
+            )
+            snaps, corrupt = si.load_jsonl_log(p)
+            self.assertEqual(len(snaps), 2)
+            self.assertEqual(len(corrupt), 3)
+            self.assertEqual([c["line"] for c in corrupt], [4, 5, 6])
+
+    def test_diff_single_file_degrading_and_peaks(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "degrade.jsonl"
+            rows = [
+                self._make_snapshot("2026-11-23T10:00:00+00:00", dirty_gib=0.05, util_pct=3.0, w_await_ms=0.8, cpu_wa=0.5, mem_avail_gib=80.0, nvme_temp=40.0),
+                self._make_snapshot("2026-11-23T10:01:00+00:00", dirty_gib=0.10, util_pct=5.0, w_await_ms=1.0, cpu_wa=1.0, mem_avail_gib=78.0, nvme_temp=42.0),
+                self._make_snapshot(
+                    "2026-11-23T10:02:00+00:00",
+                    bottleneck="IO_WAIT_SATURATION",
+                    productivity="THRASHING_LOW_EFFICIENCY",
+                    is_issue=True,
+                    dirty_gib=6.5,
+                    util_pct=96.0,
+                    w_await_ms=650.0,
+                    aqu_sz=120.0,
+                    cpu_wa=45.0,
+                    d_threads=24,
+                    mem_avail_gib=40.0,
+                    nvme_temp=68.5,
+                    wchans={"balance_dirty_pages": 24},
+                    d_comm="cargo",
+                    io_comm="cargo",
+                ),
+                self._make_snapshot(
+                    "2026-11-23T10:03:00+00:00",
+                    bottleneck="IO_WAIT_SATURATION",
+                    productivity="THRASHING_LOW_EFFICIENCY",
+                    is_issue=True,
+                    dirty_gib=8.2,
+                    util_pct=99.0,
+                    w_await_ms=920.0,
+                    aqu_sz=210.0,
+                    cpu_wa=62.0,
+                    d_threads=40,
+                    mem_avail_gib=32.0,
+                    nvme_temp=71.0,
+                    wchans={"balance_dirty_pages": 40},
+                    d_comm="cargo",
+                    io_comm="cargo",
+                ),
+            ]
+            p.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+            rep = si.diff_jsonl_logs(p)
+            self.assertEqual(rep["mode"], "diff_log")
+            self.assertEqual(rep["comparison_mode"], "single_file")
+            self.assertEqual(rep["verdict"]["status"], "DEGRADING")
+            self.assertTrue(rep["verdict"]["is_issue"])
+            self.assertNotIn("No immediate intervention needed.", rep["verdict"]["recommendations"])
+
+            summ = rep["summary"]
+            self.assertEqual(summ["snapshot_count"], 4)
+            self.assertEqual(summ["issue_count"], 2)
+            self.assertEqual(summ["issue_rate_pct"], 50.0)
+            self.assertEqual(summ["time_range"]["span_sec"], 180.0)
+            self.assertEqual(summ["verdict_distribution"]["bottleneck"], {"IO_WAIT_SATURATION": 2, "NORMAL_OR_IDLE": 2})
+            self.assertEqual(summ["peaks"]["dirty_gib"]["value"], 8.2)
+            self.assertEqual(summ["peaks"]["w_await_ms"]["value"], 920.0)
+            self.assertEqual(summ["peaks"]["w_await_ms"]["device"], "nvme2n1")
+            self.assertEqual(summ["peaks"]["disk_util_pct"]["value"], 99.0)
+            self.assertEqual(summ["peaks"]["min_mem_avail_gib"]["value"], 32.0)
+            self.assertEqual(summ["peaks"]["nvme_temp_c"]["value"], 71.0)
+
+            evl = rep["earliest_vs_latest"]
+            self.assertEqual(evl["deltas"]["dirty_gib"]["delta"], 8.15)
+            self.assertEqual(evl["deltas"]["w_await_ms" if "w_await_ms" in evl["deltas"] else "max_w_await_ms"]["delta"], 919.2)
+            self.assertEqual(rep["window_diff"]["baseline_issue_rate_pct"], 0.0)
+            self.assertEqual(rep["window_diff"]["recent_issue_rate_pct"], 100.0)
+            self.assertEqual(rep["recurring_offenders"]["d_state_wchans"]["balance_dirty_pages"], 64)
+            self.assertEqual(rep["recurring_offenders"]["d_state_comms"][0]["comm"], "cargo")
+
+            txt = si.render_diff_text(rep, markdown=False)
+            self.assertIn("Log Trend Summary:", txt)
+            self.assertIn("DEGRADING", txt)
+            self.assertIn("nvme2n1", txt)
+            md = si.render_diff_text(rep, markdown=True)
+            self.assertIn("# Log Trend Summary:", md)
+            self.assertIn("## Observed Peaks", md)
+
+    def test_diff_window_and_recovering_vs_persistent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            # 6 snapshots: first 2 healthy, middle 2 issue, last 2 healthy -> window=2 compares middle 2 vs last 2 => RECOVERING
+            p = Path(td) / "recover.jsonl"
+            rows = [
+                self._make_snapshot("2026-11-23T10:00:00+00:00"),
+                self._make_snapshot("2026-11-23T10:01:00+00:00"),
+                self._make_snapshot("2026-11-23T10:02:00+00:00", bottleneck="IO_WAIT_SATURATION", productivity="THRASHING_LOW_EFFICIENCY", is_issue=True, dirty_gib=5.0, util_pct=95.0, w_await_ms=400.0),
+                self._make_snapshot("2026-11-23T10:03:00+00:00", bottleneck="IO_WAIT_SATURATION", productivity="THRASHING_LOW_EFFICIENCY", is_issue=True, dirty_gib=4.5, util_pct=92.0, w_await_ms=350.0),
+                self._make_snapshot("2026-11-23T10:04:00+00:00"),
+                self._make_snapshot("2026-11-23T10:05:00+00:00"),
+            ]
+            p.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+            rep = si.diff_jsonl_logs(p, window=2)
+            self.assertEqual(rep["window_diff"]["baseline_count"], 2)
+            self.assertEqual(rep["window_diff"]["recent_count"], 2)
+            self.assertEqual(rep["window_diff"]["baseline_issue_rate_pct"], 100.0)
+            self.assertEqual(rep["window_diff"]["recent_issue_rate_pct"], 0.0)
+            self.assertEqual(rep["verdict"]["status"], "RECOVERING")
+            self.assertFalse(rep["verdict"]["is_issue"])
+
+            # Persistent issue log
+            p2 = Path(td) / "persist.jsonl"
+            bad = [
+                self._make_snapshot(f"2026-11-23T10:0{i}:00+00:00", bottleneck="IO_WAIT_SATURATION", productivity="THRASHING_LOW_EFFICIENCY", is_issue=True, dirty_gib=4.0, util_pct=95.0, w_await_ms=200.0)
+                for i in range(4)
+            ]
+            p2.write_text("\n".join(json.dumps(r) for r in bad) + "\n", encoding="utf-8")
+            rep2 = si.diff_jsonl_logs(p2)
+            self.assertEqual(rep2["verdict"]["status"], "PERSISTENT_ISSUE")
+            self.assertTrue(rep2["verdict"]["is_issue"])
+
+            # Single snapshot healthy & issue
+            p3 = Path(td) / "single_ok.jsonl"
+            p3.write_text(json.dumps(self._make_snapshot("2026-11-23T10:00:00+00:00")) + "\n", encoding="utf-8")
+            rep3 = si.diff_jsonl_logs(p3)
+            self.assertEqual(rep3["verdict"]["status"], "SINGLE_SNAPSHOT_HEALTHY")
+            self.assertFalse(rep3["verdict"]["is_issue"])
+
+            p4 = Path(td) / "single_bad.jsonl"
+            p4.write_text(json.dumps(bad[0]) + "\n", encoding="utf-8")
+            rep4 = si.diff_jsonl_logs(p4)
+            self.assertEqual(rep4["verdict"]["status"], "SINGLE_SNAPSHOT_ISSUE")
+            self.assertTrue(rep4["verdict"]["is_issue"])
+
+    def test_diff_two_files_baseline_vs_target(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td) / "base.jsonl"
+            target = Path(td) / "target.jsonl"
+            base.write_text(
+                "\n".join(
+                    json.dumps(self._make_snapshot(f"2026-11-23T09:0{i}:00+00:00", dirty_gib=0.05, util_pct=4.0, w_await_ms=1.0))
+                    for i in range(3)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            target.write_text(
+                "\n".join(
+                    json.dumps(self._make_snapshot(f"2026-11-23T10:0{i}:00+00:00", dirty_gib=3.5, util_pct=92.0, w_await_ms=180.0, is_issue=False))
+                    for i in range(3)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            rep = si.diff_jsonl_logs(target, baseline_path=base, window=2)
+            self.assertEqual(rep["comparison_mode"], "two_file")
+            self.assertIsNotNone(rep["baseline_summary"])
+            self.assertEqual(rep["window_diff"]["baseline_count"], 2)
+            self.assertEqual(rep["window_diff"]["recent_count"], 2)
+            # Metric degradation triggers DEGRADING + is_issue even if individual snapshots had is_issue=False
+            self.assertEqual(rep["verdict"]["status"], "DEGRADING")
+            self.assertTrue(rep["verdict"]["is_issue"])
+            self.assertIn("Log Trend Diff:", si.render_diff_text(rep))
+
+    def test_diff_log_cli_exit_codes_corrupt_warning_and_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            ok_log = Path(td) / "ok.jsonl"
+            ok_log.write_text(
+                "\n"
+                + json.dumps(self._make_snapshot("2026-11-23T10:00:00+00:00")) + "\n"
+                + "{corrupt\n"
+                + json.dumps(self._make_snapshot("2026-11-23T10:01:00+00:00")) + "\n",
+                encoding="utf-8",
+            )
+            r_ok = subprocess.run(
+                [sys.executable, str(SCRIPT), "--diff-log", str(ok_log), "--json", "--exit-on-issue"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(r_ok.returncode, 0, msg=r_ok.stderr)
+            self.assertIn("warning: skipped 1 corrupt JSON line(s)", r_ok.stderr)
+            data_ok = json.loads(r_ok.stdout)
+            self.assertEqual(data_ok["verdict"]["status"], "STABLE_HEALTHY")
+            self.assertEqual(data_ok["summary"]["corrupt_line_count"], 1)
+
+            bad_log = Path(td) / "bad.jsonl"
+            bad_log.write_text(
+                json.dumps(self._make_snapshot("2026-11-23T10:00:00+00:00")) + "\n"
+                + json.dumps(self._make_snapshot("2026-11-23T10:01:00+00:00", bottleneck="IO_WAIT_SATURATION", productivity="THRASHING_LOW_EFFICIENCY", is_issue=True, dirty_gib=6.0, util_pct=98.0, w_await_ms=500.0)) + "\n",
+                encoding="utf-8",
+            )
+            r_bad = subprocess.run(
+                [sys.executable, str(SCRIPT), "--diff-log", str(bad_log), "--json", "--exit-on-issue"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(r_bad.returncode, 3, msg=r_bad.stderr)
+            self.assertEqual(json.loads(r_bad.stdout)["verdict"]["status"], "DEGRADING")
+
+            # Missing file -> exit 1, single-line stderr, no traceback
+            r_miss = subprocess.run(
+                [sys.executable, str(SCRIPT), "--diff-log", str(Path(td) / "nope.jsonl")],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(r_miss.returncode, 1)
+            self.assertIn("error:", r_miss.stderr)
+            self.assertNotIn("Traceback", r_miss.stderr)
+            self.assertEqual(len(r_miss.stderr.strip().splitlines()), 1)
+
+            # Empty / all-corrupt file -> exit 1, single-line stderr, no traceback
+            empty_log = Path(td) / "empty.jsonl"
+            empty_log.write_text("\n  \n{bad\n", encoding="utf-8")
+            r_empty = subprocess.run(
+                [sys.executable, str(SCRIPT), "--diff-log", str(empty_log)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(r_empty.returncode, 1)
+            self.assertIn("error:", r_empty.stderr)
+            self.assertNotIn("Traceback", r_empty.stderr)
+            self.assertEqual(len(r_empty.stderr.strip().splitlines()), 1)
+
+
 class TestCLIValidation(unittest.TestCase):
     def test_help(self) -> None:
         r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, check=False)
         self.assertEqual(r.returncode, 0)
-        for flag in ("--interval", "--exit-on-issue", "--progress-check", "--no-statvfs", "--append-log", "--diagnose-pid"):
+        for flag in (
+            "--interval",
+            "--exit-on-issue",
+            "--progress-check",
+            "--no-statvfs",
+            "--append-log",
+            "--diff-log",
+            "--diff-baseline",
+            "--diff-window",
+            "--diagnose-pid",
+            "--version",
+        ):
             self.assertIn(flag, r.stdout)
+
+    def test_invalid_diff_flag_combinations_fail_cleanly(self) -> None:
+        cases = (
+            ["--diff-baseline", "/tmp/a.jsonl"],
+            ["--diff-window", "3"],
+            ["--diff-log", "/tmp/a.jsonl", "--diff-window", "0"],
+            ["--diff-log", "/tmp/a.jsonl", "--watch", "2"],
+            ["--diff-log", "/tmp/a.jsonl", "--progress-check"],
+            ["--diff-log", "/tmp/a.jsonl", "--append-log", "/tmp/b.jsonl"],
+        )
+        for args in cases:
+            r = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, check=False)
+            self.assertEqual(r.returncode, 1, msg=f"args={args} stderr={r.stderr}")
+            self.assertIn("error:", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
 
     def test_invalid_interval_fails_cleanly(self) -> None:
         r = subprocess.run([sys.executable, str(SCRIPT), "--interval", "0.01"], capture_output=True, text=True, check=False)
