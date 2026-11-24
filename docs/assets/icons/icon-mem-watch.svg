@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="sys-mem-watch icon">
+  <defs>
+    <pattern id="ic-mem-watch-grid" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M 16 0 L 0 0 0 16" fill="none" stroke="#38bdf8" stroke-width="0.75" stroke-opacity="0.14"/>
+    </pattern>
+    <clipPath id="ic-mem-watch-clip">
+      <rect x="4" y="4" width="56" height="56" rx="12"/>
+    </clipPath>
+    <filter id="ic-mem-watch-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="#070d1c"/>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="url(#ic-mem-watch-grid)" clip-path="url(#ic-mem-watch-clip)"/>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="none" stroke="#00e5ff" stroke-width="1.75"/>
+  <g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="14" y="40" width="6" height="10" rx="1" fill="#00e5ff" fill-opacity="0.2" stroke="#00e5ff"/>
+    <rect x="24" y="34" width="6" height="16" rx="1" fill="#00e5ff" fill-opacity="0.25" stroke="#00e5ff"/>
+    <rect x="34" y="28" width="6" height="22" rx="1" fill="#00e5ff" fill-opacity="0.3" stroke="#00e5ff"/>
+    <rect x="44" y="21" width="6" height="29" rx="1" fill="#ffb800" fill-opacity="0.25" stroke="#ffb800"/>
+    <polyline points="15,32 26,26 36,21 47,14" stroke="#ffb800" filter="url(#ic-mem-watch-glow)"/>
+    <polyline points="41.5,14 47,14 47,19.5" stroke="#ffb800"/>
+  </g>
+</svg>

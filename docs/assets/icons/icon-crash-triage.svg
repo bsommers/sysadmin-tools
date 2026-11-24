@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="sys-crash-triage icon">
+  <defs>
+    <pattern id="ic-crash-triage-grid" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M 16 0 L 0 0 0 16" fill="none" stroke="#38bdf8" stroke-width="0.75" stroke-opacity="0.14"/>
+    </pattern>
+    <clipPath id="ic-crash-triage-clip">
+      <rect x="4" y="4" width="56" height="56" rx="12"/>
+    </clipPath>
+    <filter id="ic-crash-triage-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="#070d1c"/>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="url(#ic-crash-triage-grid)" clip-path="url(#ic-crash-triage-clip)"/>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="none" stroke="#00e5ff" stroke-width="1.75"/>
+  <g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 13 20 L 13 13 L 20 13 M 44 13 L 51 13 L 51 20 M 13 44 L 13 51 L 20 51 M 44 51 L 51 51 L 51 44" stroke="#00e5ff"/>
+    <polyline points="14,34 21,34 25,21 29,44 33,31" stroke="#00e5ff"/>
+    <path d="M 38 27 L 48 37 M 48 27 L 38 37" stroke="#ff2a85" filter="url(#ic-crash-triage-glow)"/>
+    <line x1="36" y1="44" x2="50" y2="44" stroke="#ff2a85" stroke-opacity="0.85"/>
+  </g>
+</svg>

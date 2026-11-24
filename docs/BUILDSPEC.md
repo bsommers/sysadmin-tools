@@ -1,6 +1,6 @@
-# As-Built Buildspec — sysadmin-tools v0.3.0
+# As-Built Buildspec — sysadmin-tools v0.4.0
 
-Derived directly from live source (`src/sysadmin_tools/*.py`, 2026-11-21).
+Derived directly from live source (`src/sysadmin_tools/*.py`, 2026-11-22).
 
 ## 1. Purpose & Non-Negotiable Design Properties
 
@@ -18,7 +18,7 @@ Derived directly from live source (`src/sysadmin_tools/*.py`, 2026-11-21).
 
 - **OS:** Linux (`/proc`, `/sys`, `fcntl.flock`).
 - **Runtime:** Python `>=3.10` (stdlib only).
-- **Packaging:** `pyproject.toml` (`setuptools`, v0.3.0) with console scripts `sys-investigate`, `sys-io-guard`, `sys-mem-watch`, `sys-disk-hogs`, plus direct-copy installer `scripts/install.sh`.
+- **Packaging:** `pyproject.toml` (`setuptools`, v0.4.0) with console scripts `sys-investigate`, `sys-io-guard`, `sys-mem-watch`, `sys-disk-hogs`, `sys-crash-triage`, plus direct-copy installer `scripts/install.sh`.
 
 ## 3. Tool Contracts & Module Map
 
@@ -51,6 +51,13 @@ Derived directly from live source (`src/sysadmin_tools/*.py`, 2026-11-21).
 - **CLI flags:** `paths` (default `["."]`), `--top` (1..100, default `15`), `--depth` (1..10, default `2`), `--min-mib` (default `1.0`), `--min-file-mib` (default `10.0`), `--cross-mounts`, `--no-statvfs`, `--json` / `--markdown`, `--verbose`.
 - **Exit codes:** `0` ok, `1` validation/missing-path/runtime error, `2` argparse error.
 
+### 3.5 `sys-crash-triage` (`src/sysadmin_tools/sys_crash_triage.py`)
+- **Core telemetry:** reads `/proc`, `/sys`, `/var/log/{kern.log,syslog}` (bounded 8 MiB tail read), `/var/lib/systemd/pstore`, `/var/crash`, and `/etc/default/kdump-tools` directly, plus optional timeout-guarded `journalctl` queries (disabled via `--no-journalctl`).
+- **Capabilities:** boot timeline & downtime-gap analysis, AMD FCH `S5_RESET_STATUS` bit decoder, unclean-shutdown detection, categorized fatal/context signature scanner (`kernel_panic`, `mce_hardware`, `thermal`, `oom_killer`, `watchdog_lockup`, `gpu_fault`, `storage_fault`) with noise filtering, and `efi_pstore` / `kdump-tools` readiness audit.
+- **Verdict statuses:** `KERNEL_PANIC_OR_OOPS`, `HARDWARE_MCE_OR_THERMAL`, `OOM_OR_LOCKUP_CRASH`, `GPU_OR_STORAGE_FAULT_RESET`, `UNCLEAN_HARD_RESET`, `INSUFFICIENT_DATA`, `CLEAN_REBOOT`.
+- **CLI flags:** `--boot N` (<= 0), `--boots-history N` (1..50, default 5), `--tail-lines N` (10..500, default 80), `--no-journalctl`, `--journal-timeout SEC` (0.5..30.0, default 5.0), `--show-steps`, `--json` / `--markdown`, `--append-log PATH`, `--exit-on-issue`, `--verbose`.
+- **Exit codes:** `0` ok, `1` validation/runtime error, `2` argparse error, `3` unclean crash/reset or fatal fault detected with `--exit-on-issue`.
+
 ## 4. Known Pitfalls & Fixed Bugs
 
 - **Sum all disks when `sat_disks` is empty:** rolling PSI (`io_some10`) can stay elevated seconds after disk util drops below 85%; fall back to `sat_disks or disks`.
@@ -68,7 +75,7 @@ cd ~/src/sysadmin/sysadmin-tools
 ./scripts/install.sh --dry-run
 ```
 
-Verified counts (2026-11-21): `syntax` PASS (13 Python files), `unit` PASS (77 tests), `smoke` PASS (12 tests) — **89 tests total**.
+Verified counts (2026-11-22): `syntax` PASS (16 Python files), `unit` PASS (91 tests), `smoke` PASS (15 tests) — **106 tests total**.
 
 ## 6. Future Expansion Candidates
 

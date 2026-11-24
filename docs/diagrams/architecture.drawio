@@ -1,0 +1,152 @@
+<mxfile host="app.diagrams.net" modified="2026-11-23T12:27:00.000Z" agent="sysadmin-tools" version="24.0.0" type="device">
+  <diagram id="sysadmin-arch" name="System Architecture">
+    <mxGraphModel dx="1422" dy="860" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1520" pageHeight="960" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title Banner -->
+        <mxCell id="title" value="sysadmin-tools v0.4.0 -- End-to-End Architecture (Python 3.10+ Stdlib Only, Zero Third-Party Deps)" style="rounded=1;whiteSpace=wrap;fillColor=#f5f5f5;strokeColor=#666666;fontSize=15;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1460" height="44" as="geometry" />
+        </mxCell>
+
+        <!-- Lane 1: Installation & CLI Layer -->
+        <mxCell id="lane1" value="1. Root-NVMe Standalone CLIs (~/.local/bin direct copies, never symlinks)" style="swimlane;whiteSpace=wrap;startSize=32;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="84" width="320" height="836" as="geometry" />
+        </mxCell>
+        <mxCell id="cli_inv" value="sys-investigate&#xa;Two-snapshot CPU/Load/PSI/Disk/&#xa;NVMe thermal/mount/cgroup&#xa;--progress-check, --diagnose-pid&#xa;--no-statvfs, --append-log" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=center;" vertex="1" parent="lane1">
+          <mxGeometry x="20" y="55" width="280" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="cli_iog" value="sys-io-guard&#xa;Per-disk advisory flock + .meta JSON&#xa;CARGO_BUILD_JOBS cap + os.nice&#xa;Direct subprocess.run (no shell)&#xa;Exit 4 on lock busy / timeout" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=center;" vertex="1" parent="lane1">
+          <mxGeometry x="20" y="210" width="280" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="cli_mem" value="sys-mem-watch&#xa;Pure /proc two-snapshot RSS,&#xa;swap, vmstat, PSI, oom_score&#xa;Leak &amp; OOM-imminent detection" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=center;" vertex="1" parent="lane1">
+          <mxGeometry x="20" y="365" width="280" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="cli_hog" value="sys-disk-hogs&#xa;Iterative os.scandir walker&#xa;follow_symlinks=False, single-FS&#xa;Hardlink dedup (st_dev, st_ino)&#xa;Regenerable caches vs .git" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=center;" vertex="1" parent="lane1">
+          <mxGeometry x="20" y="515" width="280" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="cli_tri" value="sys-crash-triage&#xa;Post-crash / reboot forensics&#xa;AMD FCH S5_RESET_STATUS decode&#xa;Crash signature analyzer&#xa;--no-journalctl opt-out" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=center;" vertex="1" parent="lane1">
+          <mxGeometry x="20" y="670" width="280" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- Lane 2: Core Analysis & Guard Engines -->
+        <mxCell id="lane2" value="2. Core Analysis &amp; Concurrency Engines (Stdlib Only)" style="swimlane;whiteSpace=wrap;startSize=32;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=12;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="390" y="84" width="350" height="836" as="geometry" />
+        </mxCell>
+        <mxCell id="eng_delta" value="Monotonic Two-Snapshot Engine&#xa;T0 -&gt; sleep(dt) -&gt; T1&#xa;PID starttime verification&#xa;Rate &amp; delta normalizer" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;align=center;" vertex="1" parent="lane2">
+          <mxGeometry x="25" y="65" width="300" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="eng_flock" value="Per-Disk Lock &amp; Throttle Engine&#xa;Longest-prefix mount matcher&#xa;dm-* slave graph resolver&#xa;fcntl.flock + holder .meta JSON" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;align=center;" vertex="1" parent="lane2">
+          <mxGeometry x="25" y="215" width="300" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="eng_mem" value="Memory Growth &amp; Pressure Analyzer&#xa;RSS delta rate + swap thrash check&#xa;PSI some/full + oom_score ranking" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;align=center;" vertex="1" parent="lane2">
+          <mxGeometry x="25" y="370" width="300" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="eng_walk" value="Iterative FS Classifier&#xa;Stack-based scandir (no recursion limit)&#xa;Inode dedup set + st_dev guard&#xa;Categories: rust-target, node-modules,&#xa;python-venv, python-cache, build, cache" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;align=center;" vertex="1" parent="lane2">
+          <mxGeometry x="25" y="515" width="300" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="eng_forensic" value="Forensic Signal &amp; Bitmask Decoder&#xa;AMD FCH S5_RESET_STATUS bit parser&#xa;Regex signature matcher (MCE, GPU,&#xa;NVMe, OOM, lockup, panic, clean halt)" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;align=center;" vertex="1" parent="lane2">
+          <mxGeometry x="25" y="675" width="300" height="115" as="geometry" />
+        </mxCell>
+
+        <!-- Lane 3: Kernel & System Interfaces -->
+        <mxCell id="lane3" value="3. Kernel Pseudo-FS &amp; System Interfaces (No Hot-Path Shelling)" style="swimlane;whiteSpace=wrap;startSize=32;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=12;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="780" y="84" width="340" height="836" as="geometry" />
+        </mxCell>
+        <mxCell id="sys_proc" value="/proc Pseudo-Filesystem&#xa;stat, loadavg, meminfo, vmstat,&#xa;pressure/{cpu,io,memory}, mounts,&#xa;diskstats, &lt;pid&gt;/{stat,io,smaps,oom_score}" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;align=center;" vertex="1" parent="lane3">
+          <mxGeometry x="20" y="65" width="300" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="sys_sysfs" value="/sys Pseudo-Filesystem&#xa;block/dm-*/slaves, block/*/stat,&#xa;class/nvme/*/hwmon*/temp*_input,&#xa;fs/cgroup, firmware/dmi" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;align=center;" vertex="1" parent="lane3">
+          <mxGeometry x="20" y="215" width="300" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="sys_tmpfs" value="Tmpfs / Root Lock Storage&#xa;$XDG_RUNTIME_DIR/sys-io-guard&#xa;fallback: /tmp&#xa;Decoupled from stalled secondary disks" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;align=center;" vertex="1" parent="lane3">
+          <mxGeometry x="20" y="360" width="300" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="sys_fs" value="Mounted Filesystem Trees&#xa;Safe statvfs() (opt-out --no-statvfs)&#xa;Single-FS boundary by st_dev&#xa;Protects against hung FUSE / NFS" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;align=center;" vertex="1" parent="lane3">
+          <mxGeometry x="20" y="515" width="300" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="sys_logs" value="Crash &amp; Log Artifacts&#xa;/var/log/{kern.log,syslog}&#xa;/var/lib/systemd/pstore, /var/crash&#xa;/etc/default/kdump-tools&#xa;Optional bounded journalctl" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;align=center;" vertex="1" parent="lane3">
+          <mxGeometry x="20" y="670" width="300" height="125" as="geometry" />
+        </mxCell>
+
+        <!-- Lane 4: Verdicts & Contracts -->
+        <mxCell id="lane4" value="4. Verdicts, Reports &amp; Unified Exit Contracts" style="swimlane;whiteSpace=wrap;startSize=32;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=12;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="1160" y="84" width="330" height="836" as="geometry" />
+        </mxCell>
+        <mxCell id="out_inv" value="sys-investigate Verdicts&#xa;Bottleneck: NORMAL_OR_IDLE ..&#xa;MEMORY_SWAP_AND_IO_THRASH&#xa;Productivity: HEALTHY_IDLE_OR_LIGHT ..&#xa;WEDGED_OR_STALLED / SUSPECT_SPIN_LOOP" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;align=center;" vertex="1" parent="lane4">
+          <mxGeometry x="15" y="65" width="300" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="out_mem" value="sys-mem-watch Verdicts&#xa;HEALTHY | HIGH_MEMORY_PRESSURE |&#xa;RAPID_GROWTH_LEAK_RISK |&#xa;SWAP_THRASHING | OOM_IMMINENT" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;align=center;" vertex="1" parent="lane4">
+          <mxGeometry x="15" y="230" width="300" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="out_tri" value="sys-crash-triage Verdicts&#xa;CLEAN_REBOOT | UNCLEAN_HARD_RESET |&#xa;GPU_OR_STORAGE_FAULT_RESET |&#xa;OOM_OR_LOCKUP_CRASH | HARDWARE_MCE_OR_THERMAL |&#xa;KERNEL_PANIC_OR_OOPS | INSUFFICIENT_DATA" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;align=center;" vertex="1" parent="lane4">
+          <mxGeometry x="15" y="385" width="300" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="out_fmt" value="Output Formats&#xa;Human-readable terminal table&#xa;--json machine-parseable payload&#xa;--append-log persistent timeline" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;align=center;" vertex="1" parent="lane4">
+          <mxGeometry x="15" y="560" width="300" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="out_exit" value="Unified Exit Code Contract&#xa;0 = OK / Clean&#xa;1 = Validation or Runtime Error&#xa;2 = Argparse Usage Error&#xa;3 = Issue Detected (--exit-on-issue)&#xa;4 = Lock Busy / Timeout (sys-io-guard)" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;fontStyle=1;align=center;" vertex="1" parent="lane4">
+          <mxGeometry x="15" y="690" width="300" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- Orthogonal Connectors: Lane 1 -> Lane 2 -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="cli_inv" target="eng_delta">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="cli_iog" target="eng_flock">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="cli_mem" target="eng_mem">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="cli_hog" target="eng_walk">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="cli_tri" target="eng_forensic">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Orthogonal Connectors: Lane 2 -> Lane 3 -->
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="eng_delta" target="sys_proc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="eng_delta" target="sys_sysfs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="eng_flock" target="sys_sysfs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="eng_flock" target="sys_tmpfs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="eng_mem" target="sys_proc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="eng_walk" target="sys_fs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="eng_forensic" target="sys_logs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Orthogonal Connectors: Lane 3 -> Lane 4 -->
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#9673a6;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="sys_proc" target="out_inv">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#9673a6;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="sys_proc" target="out_mem">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#9673a6;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="sys_logs" target="out_tri">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#9673a6;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="sys_fs" target="out_fmt">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;strokeColor=#9673a6;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="sys_tmpfs" target="out_exit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

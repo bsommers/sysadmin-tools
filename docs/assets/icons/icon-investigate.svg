@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="sys-investigate icon">
+  <defs>
+    <pattern id="ic-investigate-grid" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M 16 0 L 0 0 0 16" fill="none" stroke="#38bdf8" stroke-width="0.75" stroke-opacity="0.14"/>
+    </pattern>
+    <clipPath id="ic-investigate-clip">
+      <rect x="4" y="4" width="56" height="56" rx="12"/>
+    </clipPath>
+    <filter id="ic-investigate-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="#070d1c"/>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="url(#ic-investigate-grid)" clip-path="url(#ic-investigate-clip)"/>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="none" stroke="#00e5ff" stroke-width="1.75"/>
+  <g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="32" cy="32" r="17" stroke="#00e5ff" stroke-opacity="0.9"/>
+    <path d="M 32 11 L 32 16 M 32 48 L 32 53 M 11 32 L 16 32 M 48 32 L 53 32" stroke="#00e5ff"/>
+    <polyline points="16,33 22,33 26,22 31,42 36,26 40,33 48,33" stroke="#00ff9d" filter="url(#ic-investigate-glow)"/>
+  </g>
+</svg>

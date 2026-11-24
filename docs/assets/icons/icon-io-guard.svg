@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="sys-io-guard icon">
+  <defs>
+    <pattern id="ic-io-guard-grid" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M 16 0 L 0 0 0 16" fill="none" stroke="#38bdf8" stroke-width="0.75" stroke-opacity="0.14"/>
+    </pattern>
+    <clipPath id="ic-io-guard-clip">
+      <rect x="4" y="4" width="56" height="56" rx="12"/>
+    </clipPath>
+    <filter id="ic-io-guard-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="#070d1c"/>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="url(#ic-io-guard-grid)" clip-path="url(#ic-io-guard-clip)"/>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="none" stroke="#00e5ff" stroke-width="1.75"/>
+  <g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <polygon points="32.0,11.5 47.2,20.2 47.2,37.8 32.0,46.5 16.8,37.8 16.8,20.2" fill="#0b1428" fill-opacity="0.7" stroke="#00e5ff"/>
+    <path d="M 28 27 L 28 23 A 4 4 0 0 1 36 23 L 36 27" stroke="#38bdf8"/>
+    <rect x="25.5" y="27" width="13" height="10" rx="2" fill="#070d1c" stroke="#38bdf8" filter="url(#ic-io-guard-glow)"/>
+    <line x1="32" y1="30.5" x2="32" y2="33.5" stroke="#00e5ff"/>
+    <path d="M 15 50 L 49 50" stroke="#00e5ff"/>
+    <path d="M 21 47 L 21 53 M 43 47 L 43 53" stroke="#38bdf8"/>
+  </g>
+</svg>

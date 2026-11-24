@@ -1,0 +1,55 @@
+stateDiagram-v2
+    direction TB
+
+    state "sys-investigate Bottleneck States" as INV_BOTTLENECK {
+        [*] --> NORMAL_OR_IDLE: Low CPU, IO, and Swap pressure
+
+        NORMAL_OR_IDLE --> CPU_COMPUTE_BOUND: High CPU busy, low iowait/swap
+        NORMAL_OR_IDLE --> IO_WAIT_SATURATION: High iowait / disk util / IO PSI
+        NORMAL_OR_IDLE --> MIXED_CPU_AND_IO: High CPU busy + high IO wait
+        NORMAL_OR_IDLE --> MEMORY_SWAP_THRASH: High swap-in/out + memory PSI
+        NORMAL_OR_IDLE --> MEMORY_SWAP_AND_IO_THRASH: Swap thrash + disk IO saturation
+
+        CPU_COMPUTE_BOUND --> MIXED_CPU_AND_IO: Disk queue builds
+        IO_WAIT_SATURATION --> MIXED_CPU_AND_IO: Compute load rises
+        IO_WAIT_SATURATION --> MEMORY_SWAP_AND_IO_THRASH: Memory pressure forces swap
+        MEMORY_SWAP_THRASH --> MEMORY_SWAP_AND_IO_THRASH: Backing storage saturates
+        MEMORY_SWAP_AND_IO_THRASH --> NORMAL_OR_IDLE: Pressure subsides
+        MIXED_CPU_AND_IO --> NORMAL_OR_IDLE: Workload completes
+        CPU_COMPUTE_BOUND --> NORMAL_OR_IDLE: Workload completes
+        IO_WAIT_SATURATION --> NORMAL_OR_IDLE: IO drains
+        MEMORY_SWAP_THRASH --> NORMAL_OR_IDLE: Memory reclaimed
+    }
+
+    state "sys-investigate Productivity States (--progress-check)" as INV_PROD {
+        [*] --> HEALTHY_IDLE_OR_LIGHT: Low utilization
+
+        HEALTHY_IDLE_OR_LIGHT --> PRODUCTIVE_COMPUTE: High CPU + active forward progress
+        HEALTHY_IDLE_OR_LIGHT --> PRODUCTIVE_IO: High IO throughput + bytes advancing
+        PRODUCTIVE_COMPUTE --> SUSPECT_SPIN_LOOP: High CPU, zero IO/ctx progress
+        PRODUCTIVE_IO --> THRASHING_LOW_EFFICIENCY: High swap/PSI, low net throughput
+        PRODUCTIVE_IO --> WEDGED_OR_STALLED: D-state tasks, zero IO byte delta
+        THRASHING_LOW_EFFICIENCY --> WEDGED_OR_STALLED: Progress halts completely
+        SUSPECT_SPIN_LOOP --> HEALTHY_IDLE_OR_LIGHT: Process terminates or yields
+        WEDGED_OR_STALLED --> HEALTHY_IDLE_OR_LIGHT: Blocker cleared / task killed
+    }
+
+    state "sys-crash-triage Forensic Verdicts" as CRASH_TRIAGE {
+        [*] --> CollectingEvidence: Scan /proc, /sys, kern.log, syslog, pstore, /var/crash, optional journalctl
+
+        CollectingEvidence --> KERNEL_PANIC_OR_OOPS: Kernel panic / Oops / BUG signature
+        CollectingEvidence --> HARDWARE_MCE_OR_THERMAL: MCE / EDAC / AMD S5 thermal trip
+        CollectingEvidence --> OOM_OR_LOCKUP_CRASH: OOM-killer storm or soft/hard lockup
+        CollectingEvidence --> GPU_OR_STORAGE_FAULT_RESET: GPU hang or NVMe/storage reset fault
+        CollectingEvidence --> UNCLEAN_HARD_RESET: AMD S5_RESET_STATUS unclean / missing shutdown
+        CollectingEvidence --> CLEAN_REBOOT: Clean shutdown markers + normal reset bits
+        CollectingEvidence --> INSUFFICIENT_DATA: Missing/rotated logs & no reset register evidence
+
+        CLEAN_REBOOT --> [*]: Exit 0
+        KERNEL_PANIC_OR_OOPS --> [*]: Exit 3 (--exit-on-issue)
+        HARDWARE_MCE_OR_THERMAL --> [*]: Exit 3 (--exit-on-issue)
+        OOM_OR_LOCKUP_CRASH --> [*]: Exit 3 (--exit-on-issue)
+        GPU_OR_STORAGE_FAULT_RESET --> [*]: Exit 3 (--exit-on-issue)
+        UNCLEAN_HARD_RESET --> [*]: Exit 3 (--exit-on-issue)
+        INSUFFICIENT_DATA --> [*]: Exit 0 or 3 (policy)
+    }

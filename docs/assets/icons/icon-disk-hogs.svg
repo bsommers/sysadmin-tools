@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="sys-disk-hogs icon">
+  <defs>
+    <pattern id="ic-disk-hogs-grid" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M 16 0 L 0 0 0 16" fill="none" stroke="#38bdf8" stroke-width="0.75" stroke-opacity="0.14"/>
+    </pattern>
+    <clipPath id="ic-disk-hogs-clip">
+      <rect x="4" y="4" width="56" height="56" rx="12"/>
+    </clipPath>
+    <filter id="ic-disk-hogs-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="#070d1c"/>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="url(#ic-disk-hogs-grid)" clip-path="url(#ic-disk-hogs-clip)"/>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="none" stroke="#00e5ff" stroke-width="1.75"/>
+  <g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="32" cy="32" r="18" stroke="#00e5ff" stroke-opacity="0.85"/>
+    <circle cx="32" cy="32" r="10.5" stroke="#00e5ff" stroke-opacity="0.55"/>
+    <path d="M 32 32 L 32 14 A 18 18 0 0 1 49.4 27.3 Z" fill="#00ff9d" fill-opacity="0.28" stroke="#00ff9d" filter="url(#ic-disk-hogs-glow)"/>
+    <circle cx="32" cy="32" r="3.5" fill="#070d1c" stroke="#00e5ff"/>
+  </g>
+</svg>

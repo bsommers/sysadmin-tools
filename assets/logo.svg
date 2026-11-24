@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="sysadmin-tools square icon">
+  <defs>
+    <linearGradient id="sq-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#04070f"/>
+      <stop offset="52%" stop-color="#081022"/>
+      <stop offset="100%" stop-color="#040814"/>
+    </linearGradient>
+    <radialGradient id="sq-core-glow" cx="50%" cy="50%" r="58%">
+      <stop offset="0%" stop-color="#00e5ff" stop-opacity="0.16"/>
+      <stop offset="55%" stop-color="#0284c7" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#04070f" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="sq-emblem-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00ff9d" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#00e5ff" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#00e5ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sq-accent-line" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00ff9d" stop-opacity="0.95"/>
+      <stop offset="28%" stop-color="#00e5ff" stop-opacity="0.95"/>
+      <stop offset="80%" stop-color="#38bdf8" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="sq-grid-minor" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#38bdf8" stroke-width="0.75" stroke-opacity="0.08"/>
+    </pattern>
+    <pattern id="sq-grid-major" width="96" height="96" patternUnits="userSpaceOnUse">
+      <rect width="96" height="96" fill="url(#sq-grid-minor)"/>
+      <path d="M 48 0 L 48 96 M 0 48 L 96 48" fill="none" stroke="#00e5ff" stroke-width="1" stroke-opacity="0.16"/>
+      <circle cx="48" cy="48" r="1.8" fill="#00e5ff" fill-opacity="0.38"/>
+    </pattern>
+    <filter id="sq-glow-cyan" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="sq-glow-soft" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="2.0" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <defs>
+    <clipPath id="sq-clip">
+      <rect x="20" y="20" width="472" height="472" rx="92"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#sq-clip)">
+    <rect width="512" height="512" fill="url(#sq-bg)"/>
+    <rect width="512" height="512" fill="url(#sq-grid-major)"/>
+    <rect width="512" height="512" fill="url(#sq-core-glow)"/>
+  </g>
+  <rect x="20" y="20" width="472" height="472" rx="92" fill="none" stroke="#00e5ff" stroke-width="12" stroke-opacity="0.88" filter="url(#sq-glow-soft)"/>
+  <circle cx="256" cy="256" r="142" fill="url(#sq-emblem-glow)"/>
+  <g>
+    <polygon points="256.0,74.0 413.6,165.0 413.6,347.0 256.0,438.0 98.4,347.0 98.4,165.0" fill="#071124" fill-opacity="0.92" stroke="#00e5ff" stroke-width="16" stroke-linejoin="round" filter="url(#sq-glow-cyan)"/>
+    <line x1="256.0" y1="82.0" x2="256.0" y2="130.0" stroke="#38bdf8" stroke-width="12" stroke-linecap="round" stroke-opacity="0.85"/>
+    <line x1="406.7" y1="169.0" x2="365.1" y2="193.0" stroke="#38bdf8" stroke-width="12" stroke-linecap="round" stroke-opacity="0.85"/>
+    <line x1="406.7" y1="343.0" x2="365.1" y2="319.0" stroke="#38bdf8" stroke-width="12" stroke-linecap="round" stroke-opacity="0.85"/>
+    <line x1="256.0" y1="430.0" x2="256.0" y2="382.0" stroke="#38bdf8" stroke-width="12" stroke-linecap="round" stroke-opacity="0.85"/>
+    <line x1="105.3" y1="343.0" x2="146.9" y2="319.0" stroke="#38bdf8" stroke-width="12" stroke-linecap="round" stroke-opacity="0.85"/>
+    <line x1="105.3" y1="169.0" x2="146.9" y2="193.0" stroke="#38bdf8" stroke-width="12" stroke-linecap="round" stroke-opacity="0.85"/>
+    <polygon points="256.0,134.0 361.7,195.0 361.7,317.0 256.0,378.0 150.3,317.0 150.3,195.0" fill="#0b1428" fill-opacity="0.95" stroke="#38bdf8" stroke-width="12" stroke-linejoin="round"/>
+    <circle cx="256.0" cy="74.0" r="13" fill="#04070f" stroke="#00e5ff" stroke-width="12"/>
+    <circle cx="413.6" cy="165.0" r="13" fill="#04070f" stroke="#00e5ff" stroke-width="12"/>
+    <circle cx="413.6" cy="347.0" r="13" fill="#04070f" stroke="#00e5ff" stroke-width="12"/>
+    <circle cx="256.0" cy="438.0" r="13" fill="#04070f" stroke="#00e5ff" stroke-width="12"/>
+    <circle cx="98.4" cy="347.0" r="13" fill="#04070f" stroke="#00e5ff" stroke-width="12"/>
+    <circle cx="98.4" cy="165.0" r="13" fill="#04070f" stroke="#00e5ff" stroke-width="12"/>
+    <polyline points="154,256 196,256 224,196 256,316 288,216 312,256 358,256"
+              fill="none" stroke="#00ff9d" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" filter="url(#sq-glow-cyan)"/>
+    <circle cx="224" cy="196" r="10" fill="#f0f6fc"/>
+    <circle cx="288" cy="216" r="10" fill="#00e5ff"/>
+  </g>
+</svg>

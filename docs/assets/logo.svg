@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" width="1200" height="360" role="img" aria-label="sysadmin-tools hero banner">
+  <defs>
+    <linearGradient id="hero-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#04070f"/>
+      <stop offset="52%" stop-color="#081022"/>
+      <stop offset="100%" stop-color="#040814"/>
+    </linearGradient>
+    <radialGradient id="hero-core-glow" cx="18%" cy="50%" r="48%">
+      <stop offset="0%" stop-color="#00e5ff" stop-opacity="0.16"/>
+      <stop offset="55%" stop-color="#0284c7" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#04070f" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="hero-emblem-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00ff9d" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#00e5ff" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#00e5ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hero-accent-line" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00ff9d" stop-opacity="0.95"/>
+      <stop offset="28%" stop-color="#00e5ff" stop-opacity="0.95"/>
+      <stop offset="80%" stop-color="#38bdf8" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="hero-grid-minor" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#38bdf8" stroke-width="0.75" stroke-opacity="0.08"/>
+    </pattern>
+    <pattern id="hero-grid-major" width="96" height="96" patternUnits="userSpaceOnUse">
+      <rect width="96" height="96" fill="url(#hero-grid-minor)"/>
+      <path d="M 48 0 L 48 96 M 0 48 L 96 48" fill="none" stroke="#00e5ff" stroke-width="1" stroke-opacity="0.16"/>
+      <circle cx="48" cy="48" r="1.8" fill="#00e5ff" fill-opacity="0.38"/>
+    </pattern>
+    <filter id="hero-glow-cyan" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="hero-glow-soft" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="2.0" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="1200" height="360" fill="url(#hero-bg)"/>
+  <rect width="1200" height="360" fill="url(#hero-grid-major)"/>
+  <rect width="1200" height="360" fill="url(#hero-core-glow)"/>
+  <rect x="14" y="14" width="1172" height="332" rx="14" fill="none" stroke="#00e5ff" stroke-width="1.5" stroke-opacity="0.45"/>
+  <g fill="none" stroke="#00e5ff" stroke-width="2.2" stroke-linecap="square">
+    <path d="M 14.0 36.0 L 14.0 14.0 L 36.0 14.0"/>
+    <path d="M 1164.0 14.0 L 1186.0 14.0 L 1186.0 36.0"/>
+    <path d="M 14.0 324.0 L 14.0 346.0 L 36.0 346.0"/>
+    <path d="M 1164.0 346.0 L 1186.0 346.0 L 1186.0 324.0"/>
+  </g>
+
+  <!-- Top telemetry header micro-bar -->
+  <text x="1154" y="42" text-anchor="end" fill="#94a3b8" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" letter-spacing="1.6">// ROOT-NVME DIAGNOSTICS · LINUX 3.10+ STDLIB</text>
+
+  <!-- Left multi-ring hexagonal cyber-telemetry shield emblem -->
+  <g>
+    <circle cx="192.0" cy="180.0" r="134" fill="url(#hero-emblem-glow)"/>
+    <circle cx="192.0" cy="180.0" r="127" fill="none" stroke="#38bdf8" stroke-width="1.2" stroke-opacity="0.32" stroke-dasharray="6 6"/>
+    <line x1="315.0" y1="180.0" x2="324.0" y2="180.0" stroke="#38bdf8" stroke-width="2.0" stroke-opacity="0.55"/>
+    <line x1="301.1" y1="243.0" x2="306.3" y2="246.0" stroke="#38bdf8" stroke-width="1.2" stroke-opacity="0.55"/>
+    <line x1="253.5" y1="286.5" x2="258.0" y2="294.3" stroke="#38bdf8" stroke-width="2.0" stroke-opacity="0.55"/>
+    <line x1="192.0" y1="306.0" x2="192.0" y2="312.0" stroke="#38bdf8" stroke-width="1.2" stroke-opacity="0.55"/>
+    <line x1="130.5" y1="286.5" x2="126.0" y2="294.3" stroke="#38bdf8" stroke-width="2.0" stroke-opacity="0.55"/>
+    <line x1="82.9" y1="243.0" x2="77.7" y2="246.0" stroke="#38bdf8" stroke-width="1.2" stroke-opacity="0.55"/>
+    <line x1="69.0" y1="180.0" x2="60.0" y2="180.0" stroke="#38bdf8" stroke-width="2.0" stroke-opacity="0.55"/>
+    <line x1="82.9" y1="117.0" x2="77.7" y2="114.0" stroke="#38bdf8" stroke-width="1.2" stroke-opacity="0.55"/>
+    <line x1="130.5" y1="73.5" x2="126.0" y2="65.7" stroke="#38bdf8" stroke-width="2.0" stroke-opacity="0.55"/>
+    <line x1="192.0" y1="54.0" x2="192.0" y2="48.0" stroke="#38bdf8" stroke-width="1.2" stroke-opacity="0.55"/>
+    <line x1="253.5" y1="73.5" x2="258.0" y2="65.7" stroke="#38bdf8" stroke-width="2.0" stroke-opacity="0.55"/>
+    <line x1="301.1" y1="117.0" x2="306.3" y2="114.0" stroke="#38bdf8" stroke-width="1.2" stroke-opacity="0.55"/>
+    <polygon points="192.0,68.0 289.0,124.0 289.0,236.0 192.0,292.0 95.0,236.0 95.0,124.0" fill="#071124" fill-opacity="0.93" stroke="#00e5ff" stroke-width="4.5" stroke-linejoin="round" filter="url(#hero-glow-cyan)"/>
+    <polygon points="235.0,105.5 278.0,180.0 235.0,254.5 149.0,254.5 106.0,180.0 149.0,105.5" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-opacity="0.65" stroke-dasharray="10 6"/>
+    <line x1="192.0" y1="72.0" x2="192.0" y2="112.0" stroke="#38bdf8" stroke-width="2.2" stroke-opacity="0.72"/>
+    <line x1="285.5" y1="126.0" x2="250.9" y2="146.0" stroke="#38bdf8" stroke-width="2.2" stroke-opacity="0.72"/>
+    <line x1="285.5" y1="234.0" x2="250.9" y2="214.0" stroke="#38bdf8" stroke-width="2.2" stroke-opacity="0.72"/>
+    <line x1="192.0" y1="288.0" x2="192.0" y2="248.0" stroke="#38bdf8" stroke-width="2.2" stroke-opacity="0.72"/>
+    <line x1="98.5" y1="234.0" x2="133.1" y2="214.0" stroke="#38bdf8" stroke-width="2.2" stroke-opacity="0.72"/>
+    <line x1="98.5" y1="126.0" x2="133.1" y2="146.0" stroke="#38bdf8" stroke-width="2.2" stroke-opacity="0.72"/>
+    <polygon points="192.0,114.0 249.2,147.0 249.2,213.0 192.0,246.0 134.8,213.0 134.8,147.0" fill="#0b1428" fill-opacity="0.96" stroke="#00e5ff" stroke-width="2.5" stroke-linejoin="round"/>
+    <circle cx="192.0" cy="68.0" r="5.5" fill="#04070f" stroke="#00e5ff" stroke-width="2.5"/>
+    <circle cx="192.0" cy="68.0" r="2.0" fill="#f0f6fc"/>
+    <circle cx="289.0" cy="124.0" r="5.5" fill="#04070f" stroke="#00e5ff" stroke-width="2.5"/>
+    <circle cx="289.0" cy="124.0" r="2.0" fill="#f0f6fc"/>
+    <circle cx="289.0" cy="236.0" r="5.5" fill="#04070f" stroke="#00e5ff" stroke-width="2.5"/>
+    <circle cx="289.0" cy="236.0" r="2.0" fill="#f0f6fc"/>
+    <circle cx="192.0" cy="292.0" r="5.5" fill="#04070f" stroke="#00e5ff" stroke-width="2.5"/>
+    <circle cx="192.0" cy="292.0" r="2.0" fill="#f0f6fc"/>
+    <circle cx="95.0" cy="236.0" r="5.5" fill="#04070f" stroke="#00e5ff" stroke-width="2.5"/>
+    <circle cx="95.0" cy="236.0" r="2.0" fill="#f0f6fc"/>
+    <circle cx="95.0" cy="124.0" r="5.5" fill="#04070f" stroke="#00e5ff" stroke-width="2.5"/>
+    <circle cx="95.0" cy="124.0" r="2.0" fill="#f0f6fc"/>
+    <circle cx="192.0" cy="180.0" r="36" fill="url(#hero-emblem-glow)"/>
+    <polyline points="140.0,180.0 164.0,180.0 178.0,148.0 194.0,214.0 210.0,160.0 222.0,180.0 244.0,180.0"
+              fill="none" stroke="#00ff9d" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" filter="url(#hero-glow-cyan)"/>
+    <circle cx="178.0" cy="148.0" r="3.8" fill="#f0f6fc"/>
+    <circle cx="210.0" cy="160.0" r="3.5" fill="#00e5ff"/>
+  </g>
+
+  <!-- Right wordmark, subtitle, and status pills -->
+  <g>
+    <circle cx="372" cy="83" r="4" fill="#00ff9d" filter="url(#hero-glow-soft)"/>
+    <text x="386" y="88" fill="#5eead4" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="600" letter-spacing="2.0">KERNEL TELEMETRY · ZERO-SUBPROCESS HOT PATH</text>
+
+    <text x="366" y="152" fill="#00e5ff" fill-opacity="0.32" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="56" font-weight="800" letter-spacing="3.5" filter="url(#hero-glow-cyan)">SYSADMIN-TOOLS</text>
+    <text x="366" y="152" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="56" font-weight="800" letter-spacing="3.5">SYSADMIN-TOOLS</text>
+
+    <rect x="366" y="170" width="764" height="2.2" fill="url(#hero-accent-line)"/>
+    <text x="366" y="210" fill="#cbd5e1" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="21" font-weight="500">Zero-Dependency Linux Telemetry, I/O Guard &amp; Crash Forensics</text>
+  </g>
+
+  <g>
+    <rect x="366" y="246" width="172" height="38" rx="7" fill="#0b1428" fill-opacity="0.92" stroke="#00e5ff" stroke-width="1.5"/>
+    <circle cx="381" cy="265" r="3.5" fill="#00e5ff" filter="url(#hero-glow-soft)"/>
+    <text x="393" y="270" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600">5 STANDALONE CLIs</text>
+  </g>
+  <g>
+    <rect x="552" y="246" width="178" height="38" rx="7" fill="#0b1428" fill-opacity="0.92" stroke="#38bdf8" stroke-width="1.5"/>
+    <circle cx="567" cy="265" r="3.5" fill="#38bdf8" filter="url(#hero-glow-soft)"/>
+    <text x="579" y="270" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600">PURE /proc + /sys</text>
+  </g>
+  <g>
+    <rect x="744" y="246" width="178" height="38" rx="7" fill="#0b1428" fill-opacity="0.92" stroke="#00ff9d" stroke-width="1.5"/>
+    <circle cx="759" cy="265" r="3.5" fill="#00ff9d" filter="url(#hero-glow-soft)"/>
+    <text x="771" y="270" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600">ZERO RUNTIME DEPS</text>
+  </g>
+  <g>
+    <rect x="936" y="246" width="218" height="38" rx="7" fill="#0b1428" fill-opacity="0.92" stroke="#00ff9d" stroke-width="1.5"/>
+    <circle cx="951" cy="265" r="3.5" fill="#00ff9d" filter="url(#hero-glow-soft)"/>
+    <text x="963" y="270" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600">v0.4.0 · 106 TESTS PASS</text>
+  </g>
+
+  <text x="366" y="318" fill="#94a3b8" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" letter-spacing="0.4">sys-investigate  ·  sys-io-guard  ·  sys-mem-watch  ·  sys-disk-hogs  ·  sys-crash-triage</text>
+</svg>

@@ -1,0 +1,140 @@
+================================================================================================
+SYSADMIN-TOOLS v0.4.0 -- ASCII ARCHITECTURE & PIPELINE SCHEMATICS
+Zero third-party dependencies | Python 3.10+ stdlib only | Direct /proc & /sys hot paths
+================================================================================================
+
+(a) SYSTEM ARCHITECTURE & STORAGE ISOLATION
+------------------------------------------------------------------------------------------------
+
++----------------------------------------------------------------------------------------------+
+|  ROOT NVMe (/)  -- ALWAYS RESPONSIVE FAULT DOMAIN                                            |
+|                                                                                              |
+|  ~/.local/bin/ (Direct file copies via scripts/install.sh -- NEVER symlinks to secondary)    |
+|  +-----------------+ +-------------+ +---------------+ +---------------+ +-----------------+ |
+|  | sys-investigate | | sys-io-guard| | sys-mem-watch | | sys-disk-hogs | | sys-crash-triage| |
+|  +--------+--------+ +------+------+ +-------+-------+ +-------+-------+ +--------+--------+ |
+|           |                 |                |                 |                  |          |
+|  $XDG_RUNTIME_DIR/sys-io-guard/ (tmpfs) or /tmp/  <-- advisory flock + .meta JSON |          |
++-----------|-----------------|----------------|-----------------|------------------|----------+
+            |                 |                |                 |                  |
+            v                 v                v                 v                  v
++----------------------------------------------------------------------------------------------+
+|  KERNEL PSEUDO-FS & SYSTEM LOGS (In-Memory / Root FS -- No Shelling Out on Hot Path)         |
+|  +----------------------------------+  +--------------------------------------------------+  |
+|  | /proc: stat, loadavg, meminfo,   |  | /sys: block/dm-*/slaves, block/*/stat,           |  |
+|  |   vmstat, pressure/*, mounts,    |  |   class/nvme/*/hwmon*/temp*_input,               |  |
+|  |   <pid>/{stat,io,status,smaps}   |  |   firmware/dmi, kernel/pstore                    |  |
+|  +----------------------------------+  +--------------------------------------------------+  |
+|  +----------------------------------------------------------------------------------------+  |
+|  | Post-Crash Sources (sys-crash-triage): /var/log/{kern.log,syslog}, /var/crash,         |  |
+|  |   /var/lib/systemd/pstore, /etc/default/kdump-tools, optional bounded journalctl       |  |
+|  +----------------------------------------------------------------------------------------+  |
++----------------------------------------------------------------------------------------------+
+                                      X  FAULT ISOLATION BOUNDARY  X
++----------------------------------------------------------------------------------------------+
+|  SECONDARY NVMe (/datanapps) / HUNG FUSE / NFS MOUNTS  -- MAY BE 99%+ SATURATED OR STALLED   |
+|  * --no-statvfs skips blocking statvfs() syscalls on hung mounts (sys-investigate)           |
+|  * sys-disk-hogs defaults to single-FS (st_dev) + follow_symlinks=False + safe statvfs       |
+|  * sys-io-guard serializes heavy jobs targeting /datanapps using tmpfs locks, never on disk  |
++----------------------------------------------------------------------------------------------+
+|  UNIFIED EXIT CODES:  0=OK | 1=Runtime/Val Err | 2=Argparse Err | 3=Issue | 4=Lock Busy/T/O  |
++----------------------------------------------------------------------------------------------+
+
+
+(b) TWO-SNAPSHOT DELTA SAMPLING PIPELINE (sys-investigate & sys-mem-watch)
+------------------------------------------------------------------------------------------------
+
+  [CLI Invocation]
+        |
+        v
+  +-----------------------------+     t0 = time.monotonic()
+  |  Snapshot T0 (Baseline)     | --> Read /proc/stat, /proc/vmstat, /proc/pressure/*,
+  |  (Pure /proc & /sys reads)  |     /proc/diskstats, /proc/<pid>/{stat,io,smaps_rollup}
+  +--------------+--------------+
+                 |
+                 v
+  +-----------------------------+     Wait window (--interval, default 1.0s - 2.0s)
+  |  Monotonic Sleep Window     |     Optional --diagnose-pid PID / --progress-check loop
+  +--------------+--------------+
+                 |
+                 v
+  +-----------------------------+     t1 = time.monotonic()  ;  dt = max(t1 - t0, eps)
+  |  Snapshot T1 (Current)      | --> Re-read identical /proc & /sys counters
+  +--------------+--------------+
+                 |
+                 v
+  +-----------------------------+     Compute deltas: dCPU%, dIOWait%, dPSI, dDiskUtil%,
+  |  Delta & Rate Normalizer    |     dRSS_MB/s, dSwapIn/Out, dRead/Write bytes, dVol/InvolCS
+  |  (Overflow/PID-reuse safe)  |     Verify PID starttime match before diffing per-PID stats
+  +--------------+--------------+
+                 |
+                 v
+  +---------------------------------------------------------+
+  |  Verdict Classifier                                     |
+  |  * sys-investigate -> Bottleneck + Productivity state   |
+  |  * sys-mem-watch   -> HEALTHY .. OOM_IMMINENT verdict   |
+  +--------------+-------------------------+----------------+
+                 |                         |
+                 v                         v
+  +----------------------------+   +------------------------+
+  | Human / --json / --append- |   | Exit Code Decision:    |
+  | log output stream          |   | 0 (OK) or 3 (Issue if  |
+  +----------------------------+   | --exit-on-issue set)   |
+                                   +------------------------+
+
+
+(c) sys-io-guard PER-DISK FLOCK ARCHITECTURE
+------------------------------------------------------------------------------------------------
+
+  Caller A (cargo build on /datanapps/repo)        Caller B (competing build on /datanapps/app)
+                 |                                                |
+                 v                                                v
+  +------------------------------------------------------------------------------------------+
+  |  1. Pure Kernel Disk Resolution (NO lsblk / df subprocesses)                             |
+  |     Target path -> /proc/mounts (longest mount prefix) -> device node                    |
+  |     If dm-* (LVM/LUKS): walk /sys/block/dm-*/slaves -> underlying physical disk key      |
+  +-----------------------------+----------------------------------+-------------------------+
+                                |                                  |
+                                v                                  v
+  +------------------------------------------------------------------------------------------+
+  |  2. Lock Acquisition in tmpfs ($XDG_RUNTIME_DIR/sys-io-guard or /tmp)                    |
+  |     Lockfile: <disk_key>.lock     Metadata: <disk_key>.lock.meta (holder PID/cmd/ts)     |
+  |                                                                                          |
+  |     Caller A: fcntl.flock(LOCK_EX | LOCK_NB) -> ACQUIRED                                 |
+  |               Write .meta JSON -> Set CARGO_BUILD_JOBS cap -> os.nice(+N)                |
+  |               Direct subprocess.run(cmd, shell=False) -> Release lock on exit            |
+  |                                                                                          |
+  |     Caller B: fcntl.flock(LOCK_EX | LOCK_NB) -> EWOULDBLOCK                              |
+  |               Read .meta JSON (report holder PID/cmd) -> Poll until --timeout            |
+  |               If timeout expires -> stderr diagnostic -> EXIT 4 (Lock Busy/Timeout)      |
+  +------------------------------------------------------------------------------------------+
+
+
+(d) sys-crash-triage MULTI-SOURCE FORENSIC PIPELINE
+------------------------------------------------------------------------------------------------
+
+  +--------------------+  +------------------------+  +---------------------+  +---------------+
+  | Kernel & Boot Meta |  | Kernel & System Logs   |  | Crash Dumps/Pstore  |  | Optional Log  |
+  | /proc/uptime       |  | /var/log/kern.log      |  | /var/lib/systemd/   |  | Bounded       |
+  | /proc/cmdline      |  | /var/log/syslog        |  |   pstore/*          |  | journalctl    |
+  | /sys/firmware/dmi  |  | (tail/bounded read)    |  | /var/crash/*        |  | (--no-        |
+  | kdump-tools config |  |                        |  |                     |  |  journalctl)  |
+  +---------+----------+  +-----------+------------+  +----------+----------+  +-------+-------+
+            |                         |                          |                     |
+            +-------------------------+------------+-------------+---------------------+
+                                                   |
+                                                   v
+  +------------------------------------------------------------------------------------------+
+  |  Signature & Hardware Register Decoder                                                   |
+  |  * AMD FCH S5_RESET_STATUS bitmask decoder (thermal, watchdog, power-loss, software rst) |
+  |  * Pattern extraction: MCE/EDAC, thermal trip, GPU/NVMe reset, OOM-killer, soft/hard     |
+  |    lockup, kernel panic/oops/BUG, clean systemd shutdown markers                         |
+  +------------------------------------------------+-----------------------------------------+
+                                                   |
+                                                   v
+  +------------------------------------------------------------------------------------------+
+  |  Forensic Verdict Synthesizer (Highest-Confidence Precedence)                            |
+  |  CLEAN_REBOOT | UNCLEAN_HARD_RESET | GPU_OR_STORAGE_FAULT_RESET | OOM_OR_LOCKUP_CRASH |  |
+  |  HARDWARE_MCE_OR_THERMAL | KERNEL_PANIC_OR_OOPS | INSUFFICIENT_DATA                      |
+  |  Outputs: Structured Report (--json / text) + Exit 0 (clean) or Exit 3 (--exit-on-issue) |
+  +------------------------------------------------------------------------------------------+

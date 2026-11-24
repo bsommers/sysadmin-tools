@@ -1,0 +1,51 @@
+sequenceDiagram
+    autonumber
+
+    participant User as Operator / Monitor
+    participant Tool as sys-investigate / sys-mem-watch
+    participant Kernel as Linux /proc & /sys
+    participant JobA as Job A (sys-io-guard)
+    participant JobB as Job B (sys-io-guard)
+    participant LockDir as tmpfs Lock Dir ($XDG_RUNTIME_DIR)
+    participant TargetFS as Physical Disk (/proc/mounts + dm-*)
+
+    rect rgb(235, 245, 255)
+        Note over User,Kernel: Flow 1 -- Monotonic Two-Snapshot Delta Sampling (sys-investigate / sys-mem-watch)
+        User->>Tool: Invoke CLI (--interval N, --json, --exit-on-issue)
+        Tool->>Kernel: Snapshot T0 (time.monotonic + read /proc/stat, vmstat, pressure/*, pid/*)
+        Kernel-->>Tool: Baseline counters + PID starttime tokens
+        Tool->>Tool: Sleep monotonic window (dt = T1 - T0)
+        Tool->>Kernel: Snapshot T1 (re-read /proc & /sys counters; skip statvfs if --no-statvfs)
+        Kernel-->>Tool: Current counters + NVMe hwmon temps
+        Tool->>Tool: Compute deltas (verify PID starttime to prevent PID-reuse skew)
+        Tool->>Tool: Classify bottleneck/productivity or memory verdict
+        alt Issue detected and --exit-on-issue set
+            Tool-->>User: Emit report / JSON / --append-log + Exit 3
+        else Healthy or check-only
+            Tool-->>User: Emit report / JSON / --append-log + Exit 0
+        end
+    end
+
+    rect rgb(240, 250, 240)
+        Note over JobA,TargetFS: Flow 2 -- sys-io-guard Concurrent Lock Acquisition & Timeout Handoff
+        JobA->>TargetFS: Resolve path -> mount -> physical disk key (no subprocesses)
+        JobA->>LockDir: open(disk.lock) + fcntl.flock(LOCK_EX | LOCK_NB)
+        LockDir-->>JobA: Lock acquired
+        JobA->>LockDir: Write disk.lock.meta (holder PID, cmd, timestamp)
+        JobA->>JobA: Apply CARGO_BUILD_JOBS cap + os.nice
+        JobA->>TargetFS: Direct subprocess.run(cmd, shell=False)
+
+        JobB->>TargetFS: Resolve path -> same physical disk key
+        JobB->>LockDir: fcntl.flock(LOCK_EX | LOCK_NB)
+        LockDir-->>JobB: EWOULDBLOCK (lock busy)
+        JobB->>LockDir: Read disk.lock.meta (inspect active holder)
+
+        alt Job A finishes before Job B --timeout
+            JobA->>LockDir: Release flock & cleanup .meta
+            JobB->>LockDir: Retry flock -> Lock acquired
+            JobB->>TargetFS: Run guarded command -> Exit child status
+        else Job B --timeout expires while Job A holds lock
+            JobB-->>JobB: Format holder diagnostic from .meta
+            Note right of JobB: Exit 4 (Lock Busy / Timeout)
+        end
+    end

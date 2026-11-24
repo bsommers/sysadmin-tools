@@ -1,0 +1,60 @@
+flowchart TD
+    subgraph INSTALL["Root NVMe Installation (scripts/install.sh)"]
+        SRC["Repo Source (Python 3.10+ stdlib only)"]
+        COPY["Direct File Copies in ~/.local/bin (Never Symlinks)"]
+        SRC --> COPY
+    end
+
+    subgraph CLIS["5 Standalone Diagnostic & Guard CLIs"]
+        INV["sys-investigate\n(CPU, Load, PSI, Disk, NVMe Thermal, Cgroup, --progress-check, --diagnose-pid)"]
+        IOG["sys-io-guard\n(Per-Disk Flock, CARGO_BUILD_JOBS Cap, os.nice, Direct subprocess.run)"]
+        MEM["sys-mem-watch\n(Two-Snapshot RSS, Swap, vmstat, PSI, oom_score)"]
+        HOG["sys-disk-hogs\n(Iterative os.scandir, Hardlink Dedup, Single-FS, Regenerable vs .git)"]
+        TRI["sys-crash-triage\n(Post-Crash Forensics, AMD FCH S5_RESET_STATUS Decoder)"]
+    end
+
+    COPY --> INV
+    COPY --> IOG
+    COPY --> MEM
+    COPY --> HOG
+    COPY --> TRI
+
+    subgraph KERNEL["Direct Kernel Pseudo-FS & System Data Sources"]
+        PROC["/proc\n(stat, loadavg, meminfo, vmstat, pressure/*, mounts, diskstats, pid/*)"]
+        SYS["/sys\n(block/dm-*/slaves, block/*/stat, nvme hwmon thermals, firmware)"]
+        TMPFS["Lock Dir on tmpfs/root\n($XDG_RUNTIME_DIR/sys-io-guard or /tmp + .meta JSON)"]
+        FSWALK["Target Filesystem Tree\n(os.scandir follow_symlinks=False, st_dev boundary, safe statvfs)"]
+        LOGS["Crash & Boot Artifacts\n(/var/log/kern.log, syslog, pstore, /var/crash, kdump-tools, optional journalctl)"]
+    end
+
+    INV -->|"Hot-path direct read (--no-statvfs safe)"| PROC
+    INV -->|"Disk & NVMe thermal read"| SYS
+    IOG -->|"Mount prefix resolution"| PROC
+    IOG -->|"dm-* slave traversal"| SYS
+    IOG -->|"fcntl.flock + holder .meta"| TMPFS
+    MEM -->|"Two-snapshot pure /proc read"| PROC
+    HOG -->|"Bounded iterative walk"| FSWALK
+    TRI -->|"Boot & kernel state"| PROC
+    TRI -->|"Hardware/reset metadata"| SYS
+    TRI -->|"Bounded log & dump scan (--no-journalctl opt-out)"| LOGS
+
+    subgraph CONTRACTS["Output & Unified Exit-Code Contracts"]
+        OUT["Structured Output\n(Human Report, --json, --append-log)"]
+        EX0["Exit 0: Healthy / OK"]
+        EX1["Exit 1: Validation or Runtime Error"]
+        EX2["Exit 2: Argparse Usage Error"]
+        EX3["Exit 3: Issue Detected (--exit-on-issue)"]
+        EX4["Exit 4: Lock Busy / Timeout (sys-io-guard)"]
+    end
+
+    INV --> OUT
+    IOG --> OUT
+    MEM --> OUT
+    HOG --> OUT
+    TRI --> OUT
+
+    OUT --> EX0
+    OUT --> EX1
+    OUT --> EX2
+    OUT --> EX3
+    IOG -->|"Contention timeout"| EX4

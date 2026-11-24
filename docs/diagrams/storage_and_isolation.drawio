@@ -1,0 +1,99 @@
+<mxfile host="app.diagrams.net" modified="2026-11-23T12:27:00.000Z" agent="sysadmin-tools" version="24.0.0" type="device">
+  <diagram id="storage-isolation" name="Storage and Fault Isolation">
+    <mxGraphModel dx="1422" dy="860" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1480" pageHeight="920" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="si_title" value="Storage &amp; Fault-Domain Isolation: Staying Responsive Under 99%+ Disk Saturation or Hung Mounts" style="rounded=1;whiteSpace=wrap;fillColor=#f5f5f5;strokeColor=#666666;fontSize=15;fontStyle=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1420" height="44" as="geometry" />
+        </mxCell>
+
+        <!-- Healthy Fault Domain 1: Root NVMe -->
+        <mxCell id="dom_root" value="Healthy Domain A: Root NVMe (/) -- Always Responsive" style="swimlane;whiteSpace=wrap;startSize=32;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=12;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="90" width="440" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="r_bin" value="~/.local/bin/ (Direct File Copies)&#xa;sys-investigate | sys-io-guard&#xa;sys-mem-watch | sys-disk-hogs&#xa;sys-crash-triage&#xa;Installed via scripts/install.sh" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;fontStyle=1;align=center;" vertex="1" parent="dom_root">
+          <mxGeometry x="25" y="55" width="390" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="r_py" value="/usr/bin/python3 (3.10+ Stdlib Only)&#xa;Zero virtualenv / site-packages imports&#xa;from secondary mounts" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;align=center;" vertex="1" parent="dom_root">
+          <mxGeometry x="25" y="195" width="390" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="r_why" value="Why Direct Copies (Never Symlinks):&#xa;Symlinks pointing into /datanapps/repo block execve()&#xa;and path resolution if /datanapps enters D-state stall." style="rounded=1;whiteSpace=wrap;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=center;" vertex="1" parent="dom_root">
+          <mxGeometry x="25" y="285" width="390" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Healthy Fault Domain 2: RAM / tmpfs & Kernel Pseudo-FS -->
+        <mxCell id="dom_ram" value="Healthy Domain B: RAM / tmpfs &amp; Kernel Pseudo-FS" style="swimlane;whiteSpace=wrap;startSize=32;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="510" y="90" width="450" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="m_lock" value="$XDG_RUNTIME_DIR/sys-io-guard (tmpfs)&#xa;Fallback: /tmp (root/tmpfs)&#xa;Holds &lt;disk_key&gt;.lock + .meta JSON&#xa;Never creates lockfiles on target data disk" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=center;" vertex="1" parent="dom_ram">
+          <mxGeometry x="25" y="55" width="400" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="m_proc" value="/proc &amp; /sys In-Memory Kernel Interfaces&#xa;Direct open()/read() in Python&#xa;No shelling out to df, lsblk, iostat, ps, or top&#xa;(avoids spawning tools that stat() stalled mounts)" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=center;" vertex="1" parent="dom_ram">
+          <mxGeometry x="25" y="175" width="400" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="m_pstore" value="/var/log, pstore, /var/crash (Root FS)&#xa;sys-crash-triage reads bounded tails locally&#xa;--no-journalctl avoids systemd journal stalls" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=center;" vertex="1" parent="dom_ram">
+          <mxGeometry x="25" y="290" width="400" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- Healthy Domain 3: Defensive Guardrails -->
+        <mxCell id="dom_guard" value="Defensive Syscall Guardrails" style="swimlane;whiteSpace=wrap;startSize=32;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=12;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="90" width="450" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="g_statvfs" value="--no-statvfs Flag (sys-investigate)&#xa;Skips os.statvfs() across all mountpoints&#xa;Eliminates uninterruptible D-state hangs&#xa;on unresponsive FUSE/NFS/SMB mounts" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;align=center;" vertex="1" parent="dom_guard">
+          <mxGeometry x="25" y="55" width="400" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="g_scandir" value="Single-FS &amp; No-Symlink Walk (sys-disk-hogs)&#xa;st_dev boundary prevents crossing into hung mounts&#xa;follow_symlinks=False + hardlink dedup (st_dev, st_ino)&#xa;Safe statvfs() wrapper isolates mount errors" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;align=center;" vertex="1" parent="dom_guard">
+          <mxGeometry x="25" y="160" width="400" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="g_throttle" value="Write-Storm Prevention (sys-io-guard)&#xa;Serializes competing heavy builds per physical disk&#xa;Caps CARGO_BUILD_JOBS + lowers priority via os.nice&#xa;Fast-fails with Exit 4 instead of piling up I/O" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;align=center;" vertex="1" parent="dom_guard">
+          <mxGeometry x="25" y="270" width="400" height="75" as="geometry" />
+        </mxCell>
+
+        <!-- Isolation Boundary Bar -->
+        <mxCell id="boundary" value="========= FAULT ISOLATION BOUNDARY (Diagnostics &amp; Locks NEVER depend on stalled mounts below) =========" style="rounded=1;whiteSpace=wrap;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;fontStyle=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="30" y="485" width="1420" height="38" as="geometry" />
+        </mxCell>
+
+        <!-- Degraded / Stalled Domain -->
+        <mxCell id="dom_bad" value="Potentially Degraded / Stalled Storage &amp; Network Mounts (Fault Domains Under Observation)" style="swimlane;whiteSpace=wrap;startSize=32;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=12;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="555" width="1420" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="b_nvme" value="Secondary NVMe (/datanapps)&#xa;Source repos, Rust target/, Docker/VM images&#xa;Failure Mode: 99%+ util saturation, thermal throttling,&#xa;writeback queues, or NVMe controller reset" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;align=center;" vertex="1" parent="dom_bad">
+          <mxGeometry x="35" y="65" width="410" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="b_dm" value="Device-Mapper / LVM / LUKS (dm-*)&#xa;Maps logical volumes onto secondary NVMe&#xa;Resolved purely via /sys/block/dm-*/slaves&#xa;without issuing blocking block I/O" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;align=center;" vertex="1" parent="dom_bad">
+          <mxGeometry x="505" y="65" width="410" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="b_fuse" value="Hung FUSE / NFS / Remote Mounts&#xa;Failure Mode: Dead daemon or network partition&#xa;Causes df / statvfs() / symlink traversal&#xa;to freeze indefinitely in kernel D-state" style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;align=center;" vertex="1" parent="dom_bad">
+          <mxGeometry x="975" y="65" width="410" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="b_outcome" value="Operational Guarantee: Even while /datanapps is 100% I/O saturated and FUSE/NFS mounts are frozen, an operator can invoke sys-investigate --no-statvfs, sys-mem-watch, sys-io-guard, and sys-crash-triage immediately from ~/.local/bin with zero dependency on the degraded storage path." style="rounded=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;fontStyle=1;align=center;" vertex="1" parent="dom_bad">
+          <mxGeometry x="35" y="220" width="1350" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Connectors -->
+        <mxCell id="se1" value="Executes directly" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82b366;strokeWidth=1.5;endArrow=block;endFill=1;fontSize=10;" edge="1" parent="1" source="r_bin" target="m_proc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="se2" value="Locks in tmpfs" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6c8ebf;strokeWidth=1.5;endArrow=block;endFill=1;fontSize=10;" edge="1" parent="1" source="r_bin" target="m_lock">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="se3" value="Enforces guardrails" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9673a6;strokeWidth=1.5;endArrow=block;endFill=1;fontSize=10;" edge="1" parent="1" source="m_proc" target="g_statvfs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="se4" value="Observes via /sys (non-blocking)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;strokeColor=#d79b00;strokeWidth=1.5;endArrow=block;endFill=1;fontSize=10;" edge="1" parent="1" source="m_proc" target="b_dm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="se5" value="Serializes writes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;strokeColor=#6c8ebf;strokeWidth=1.5;endArrow=block;endFill=1;fontSize=10;" edge="1" parent="1" source="m_lock" target="b_nvme">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="se6" value="Bypasses hung statvfs()" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;strokeColor=#b85450;strokeWidth=1.5;endArrow=block;endFill=1;fontSize=10;" edge="1" parent="1" source="g_statvfs" target="b_fuse">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
