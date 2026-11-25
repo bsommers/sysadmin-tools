@@ -1,6 +1,6 @@
-# Checkpoint — sysadmin-tools v0.5.0 Batch 1 Complete (Session Handoff) — 2026-11-24
+# Checkpoint — sysadmin-tools v0.5.0 Local Release Ready — 2026-11-25
 
-**Status:** IN PROGRESS — v0.5.0 Batch 1 committed (`399626d`), verified, and installed to `~/.local/bin`; ready for Batch 2 & 3 in fresh session
+**Status:** COMPLETE (LOCAL) — v0.5.0 verified, committed, and tagged locally; awaiting confirmation for push/release/Pages enable
 
 ## User Goal & Verbatim Decisions
 - **Goal:** Execute all `v0.5.0` roadmap and polish options in order:
@@ -9,61 +9,44 @@
   3. CI workflow (`.github/workflows/ci.yml`) & `systemd` user timer templates (`packaging/systemd/`)
   4. Read-only live operational host check
   5. Sync icons/diagrams/docs, verify everything, and release `v0.5.0`
-- **Verbatim user instruction:** `"All in subagents in order. Feel free to run them without asking me to be granted me."`
-- **Verbatim handoff decision:** `"1"` (commit Batch 1 + refresh checkpoint + start a fresh session before running Batch 2 & 3).
+- **Verbatim user instruction (prior session):** `"All in subagents in order. Feel free to run them without asking me to be granted me."`
+- **Verbatim resume request (this session):** `Read AGENTS.md and docs/CHECKPOINT.md. Verify git status and baseline state, then execute Batch 2 & 3 (v0.5.0 icons/docs, GitHub Pages showcase, live operational host check, verification, and v0.5.0 release).`
 
 ## Authorizations & Scope
-- Local edits, subagent dispatch, tests, local installation (`~/.local/bin`), and local commits were authorized unattended before session reset.
-- **Re-confirm outward-facing actions after reset:** ask/confirm before `git push origin main`, `git push origin v0.5.0`, `gh release create v0.5.0`, or enabling GitHub Pages via `gh api` unless the user explicitly re-authorizes pushing/releasing in the fresh session.
+- Local edits, subagent dispatch, tests, local installation (`~/.local/bin`), local commits, and local tag `v0.5.0` completed cleanly.
+- **Outward-facing actions gated for explicit user confirmation:** `git push origin main`, `git push origin v0.5.0`, `gh release create v0.5.0`, and enabling GitHub Pages (`gh api -X POST repos/bsommers/sysadmin-tools/pages -f build_type=workflow`).
 
 ## Done (with evidence)
-- **Batch 1 Commit:** `399626d` (`feat: add sys-investigate --diff-log, sys-net-watch, sys-systemd-watch, CI & systemd templates`) on `main`.
-  - `src/sysadmin_tools/sys_investigate.py` (`VERSION = "0.5.0"`): added `--diff-log PATH`, `--diff-baseline PATH`, `--diff-window N`, `--version` (`40/40` tests pass: 35 unit + 5 smoke).
-  - `src/sysadmin_tools/sys_net_watch.py` (`VERSION = "0.5.0"`): standalone pure `/proc/net/{dev,tcp,tcp6,udp,udp6,snmp,softnet_stat}` investigator, zero subprocesses (`22/22` tests pass: 18 unit + 4 smoke; live run healthy).
-  - `src/sysadmin_tools/sys_systemd_watch.py` (`VERSION = "0.5.0"`): standalone pure `/sys/fs/cgroup` + `/proc` + journal stat unit pressure/crash-loop/burst investigator, zero subprocesses (`21/21` tests pass: 18 unit + 3 smoke; live run healthy).
-  - `.github/workflows/ci.yml`: hardened CI workflow (`permissions: { contents: read }`, `concurrency` w/ `cancel-in-progress: true`, `timeout-minutes: 10`, `paths-ignore`, SHA-pinned `actions/checkout` `v4` and `actions/setup-python` `v5`) + `packaging/systemd/sys-investigate-sampler.{service,timer}` + `packaging/systemd/README.md` + `tests/unit/test_packaging_templates.py` (`6/6` tests pass).
-  - Packaging & install wired to `v0.5.0`: `pyproject.toml`, `src/sysadmin_tools/__init__.py`, `scripts/install.sh`.
-- **Full Verification & Install Parity:**
-  - `./scripts/verify.sh`: PASS (`[PASS] syntax (0s)`, `[PASS] unit (5s)`, `[PASS] smoke (10s)`).
-  - `./scripts/install.sh`: PASS — all 7 CLIs installed in `~/.local/bin/` with `diff -u` parity `0` (`ALL_7_PARITY_OK`):
-    `sys-investigate`, `sys-io-guard`, `sys-mem-watch`, `sys-disk-hogs`, `sys-crash-triage`, `sys-net-watch`, `sys-systemd-watch`.
+- **Batch 1 Commit (`399626d`):** `feat: add sys-investigate --diff-log, sys-net-watch, sys-systemd-watch, CI & systemd templates`
+  - `src/sysadmin_tools/sys_investigate.py` (`0.5.0`), `src/sysadmin_tools/sys_net_watch.py` (`0.5.0`), `src/sysadmin_tools/sys_systemd_watch.py` (`0.5.0`), `.github/workflows/ci.yml`, `packaging/systemd/*`, `tests/unit/test_packaging_templates.py`, `pyproject.toml`, `scripts/install.sh`.
+- **Batch 2 Commit (`cc6f0d7`):** `docs: add GitHub Pages showcase site, v0.5.0 icons, and synced docs`
+  - `scripts/render_assets.py` updated for 7 CLIs + `v0.5.0 · 166 TESTS PASS`; regenerated `assets/logo.{svg,png}`, `docs/assets/{logo.svg,logo.png,icon.svg}`, `docs/assets/icons/icon-*.svg` (7 icons including `icon-net-watch.svg` and `icon-systemd-watch.svg`), and `docs/assets/examples/{architecture-overview,incident-triage-workflow}.svg`.
+  - Synced `README.md`, `CHANGELOG.md` (`## [v0.5.0]`), `docs/{README,purpose,architecture,running,how-to,BUILDSPEC}.md`, `docs/user-guide/{README,01,02,06,07-network-and-systemd-watch}.md`, and `docs/diagrams/{README.md,ascii_architecture.txt,architecture.mmd}`.
+  - Created GitHub Pages site (`docs/index.html`, `docs/.nojekyll`) and hardened SHA-pinned `.github/workflows/pages.yml`.
+  - Added `TestGitHubPagesShowcase` (3 tests) to `tests/unit/test_packaging_templates.py`.
+- **Full Verification Gate:**
+  - `./scripts/verify.sh`: PASS (`syntax` 0s, `unit` 143 tests in 5.125s, `smoke` 23 tests in 12.060s — **166 tests total**).
+  - Asset/XML/HTML/Markdown checks: `ALL_ASSET_XML_HTML_MD_CHECKS_OK` (all `.svg` and `.drawio` XML-valid with zero external URLs or `/home/` paths; all `docs/index.html` and Markdown relative links valid).
+  - `./scripts/install.sh --dry-run` + `diff -u` parity across all 7 `~/.local/bin/sys-*` binaries: `ALL_7_PARITY_OK`.
+- **Read-Only Live Host Operational Check (All 7 Installed CLIs, zero tracebacks, `/datanapps` untouched):**
+  - `sys-investigate` (`0.5.0`, exit `0`): `NORMAL_OR_IDLE` / `HEALTHY_IDLE_OR_LIGHT` (`us=4.1%`, `sy=0.9%`, `wa=0.1%`, `id=94.8%`, `load1=4.17` on 32 CPUs, PSI `0.0%`, NVMe `43.9°C` / `24.9°C` / `34.9°C`).
+  - `sys-crash-triage` (exit `0`): `CLEAN_REBOOT` (kernel `7.0.0-44-generic`, uptime `2d 08h 07m`, `is_unclean=false`, AMD FCH reset `0x00300800` `CF9_FULL_RESET`).
+  - `sys-net-watch` (`0.5.0`, exit `0`): `HEALTHY` (30 interfaces, `eno1` `rx=77.22 kbps` / `tx=99.91 kbps`, `0` link errors/drops/retransmits/softnet drops, `tcp_estab=87`, `close_wait=9`, `time_wait=71`).
+  - `sys-systemd-watch` (`0.5.0`, exit `0`): `HEALTHY` (145 monitored cgroup units, `0` throttling/OOM/IO-pressure/crash-loop units, `d_state_pids=0`, `zombie_pids=3`, journal `3488.0 MiB` with `0.0 MiB/s` growth).
+  - `sys-mem-watch` (exit `0`): `HEALTHY` (`mem_avail=108.33/183.66 GiB`, `swap_used=0.0/8.0 GiB`, `oom_kill_delta=0`, PSI `0.0%`).
+  - `sys-disk-hogs` on `.` (exit `0`): `3.32 MiB` total (`1.02 MiB` `.git`, `0.85 MiB` reclaimable `__pycache__`, 0 skipped).
+  - `sys-io-guard --status` (exit `0`): `0` active locks, `0` idle locks.
 
 ## Working-Tree & Process State
 - **Repo path:** `~/src/sysadmin/sysadmin-tools`
 - **Remote:** `origin` -> `https://github.com/bsommers/sysadmin-tools.git`
-- **Branch:** `main` (ahead of `origin/main` by `399626d` + this checkpoint commit; prior release tag `v0.4.0` is pushed at `28166b4`).
-- **Stashes / Background tasks / Subagents:** None (0 running tasks or subagents; clean working tree once checkpoint is committed).
+- **Branch:** `main` (ahead of `origin/main`, locally tagged `v0.5.0`)
+- **Stashes / Background tasks / Subagents:** None running; clean working tree.
 
-## Pitfalls & Guardrails
-- Keep every CLI in `src/sysadmin_tools/*.py` strictly standalone (zero `sysadmin_tools.*` cross-imports) so `~/.local/bin/*` direct copies remain self-contained.
-- **Do NOT run `sys-disk-hogs` against `/datanapps`** during live checks — secondary NVMe (`/datanapps`) can stall under writeback load.
-- `sys-investigate` uses `--watch 1` and `--no-statvfs` (not `--samples` or `--no-fs-stat`).
-- Resolve exact commit SHAs via `gh api` when pinning GitHub Actions in `.github/workflows/pages.yml` (never guess SHAs).
-
-## Exact Next Steps (Batch 2 & 3, in order)
-1. **Verify baseline in fresh session:**
-   ```bash
-   cd ~/src/sysadmin/sysadmin-tools && git status --short && git log --oneline -n 5 && ./scripts/verify.sh
-   ```
-2. **Dispatch 3 parallel disjoint `self` subagents (Batch 2):**
-   - **Subagent 2A (`Model: "flash"` — icons, showcase SVGs, and `v0.5.0` docs sync):**
-     - Update `scripts/render_assets.py` to generate `docs/assets/icons/icon-net-watch.svg` and `docs/assets/icons/icon-systemd-watch.svg` (`64x64`), update hero/architecture/workflow SVGs for 7 CLIs (`v0.5.0`), and run `python3 scripts/render_assets.py` to regenerate PNGs (`docs/assets/logo.png`, `assets/logo.png`).
-     - Sync `README.md`, `CHANGELOG.md` (`## [0.5.0]`), `docs/{README,purpose,architecture,running,how-to,BUILDSPEC}.md`, `docs/user-guide/`, and `docs/diagrams/{README.md,ascii_architecture.txt,architecture.mmd}` for all 7 CLIs, `--diff-log`, CI/systemd sampler, and GitHub Pages link (`https://bsommers.github.io/sysadmin-tools/`). Remove implemented items from `docs/BUILDSPEC.md` §6.
-     - Leave `docs/index.html`, `docs/.nojekyll`, `.github/workflows/pages.yml`, and `docs/CHECKPOINT.md` untouched. Zero absolute `/home/` paths in Markdown/SVG files.
-   - **Subagent 2B (`Model: "inherit"` — GitHub Pages showcase site):**
-     - Read `building-github-pages-sites/SKILL.md`.
-     - Create `docs/index.html` (obsidian `#04070f` & neon cyan `#00e5ff` / emerald `#00ff9d` grid, zero external CDN URLs/fonts/scripts, cards for all 7 CLIs with `assets/icons/icon-*.svg`, showcase SVGs, install & systemd quickstart), `docs/.nojekyll`, and hardened SHA-pinned `.github/workflows/pages.yml`.
-   - **Subagent 2C (`Model: "flash"` — read-only live host check):**
-     - Run installed `~/.local/bin/` binaries (`sys-investigate --interval 1 --watch 1 --no-statvfs --json`, `sys-crash-triage --no-journalctl --json`, `sys-net-watch --interval 0.5 --samples 2 --top 5 --json`, `sys-systemd-watch --interval 0.5 --samples 2 --top 5 --json`, `sys-mem-watch --interval 0.5 --samples 2 --top 5 --json`, `sys-disk-hogs --max-depth 2 --top 5 --json .`). Do NOT touch `/datanapps`.
-3. **Full Verification Gate:**
-   - `./scripts/verify.sh`
-   - XML parse check (`xml.etree.ElementTree.parse`) + no external URLs on all SVGs and `.drawio` files
-   - Validate all `docs/index.html` asset links + relative Markdown links (`0` broken links, `0` `/home/` paths)
-   - Re-verify `tests/unit/test_packaging_templates.py` and `.github/workflows/pages.yml`
-4. **Update `docs/CHECKPOINT.md` (to `COMPLETE`), commit Batch 2/3, and confirm before outward-facing `v0.5.0` push/release/Pages enable:**
-   - Commit Batch 2 assets/docs/Pages (`docs: add GitHub Pages showcase site, v0.5.0 icons, and synced docs`), update `docs/CHECKPOINT.md`, commit (`chore(release): prepare release v0.5.0`), tag `v0.5.0`, and (once confirmed) push `main` + `v0.5.0`, run `gh release create v0.5.0 --title "sysadmin-tools v0.5.0" --notes-from-tag`, and configure GitHub Pages (`gh api -X POST repos/bsommers/sysadmin-tools/pages -f build_type=workflow`).
-
-## Exact Resume Prompt (for fresh session)
-```text
-Read AGENTS.md and docs/CHECKPOINT.md. Verify git status and baseline state, then execute Batch 2 & 3 (v0.5.0 icons/docs, GitHub Pages showcase, live operational host check, verification, and v0.5.0 release).
+## Exact Next Commands (Outward-Facing — Pending User Confirmation)
+```bash
+git push origin main
+git push origin v0.5.0
+gh release create v0.5.0 --title "sysadmin-tools v0.5.0" --notes-from-tag
+gh api -X POST repos/bsommers/sysadmin-tools/pages -f build_type=workflow
 ```
