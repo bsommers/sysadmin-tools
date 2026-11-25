@@ -4,6 +4,24 @@ All notable changes to `sysadmin-tools` are documented in this file.
 
 The format adheres to [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.5.0] - 2026-11-24
+
+### Added
+- **`sys-net-watch` CLI** (`src/sysadmin_tools/sys_net_watch.py`): zero-dependency, zero-subprocess `/proc/net/*` investigator for NIC errors/drops (`/proc/net/dev`), IPv4/IPv6 TCP & UDP socket state and queue pressure (`/proc/net/{tcp,tcp6,udp,udp6}`), SNMP retransmit/reset/checksum deltas (`/proc/net/snmp`), and per-CPU softnet packet drop & `time_squeeze` deltas (`/proc/net/softnet_stat`) with deterministic 5-status classification (`LINK_ERRORS`, `PACKET_DROPS`, `ELEVATED_RETRANSMITS`, `SOCKET_PRESSURE`, `HEALTHY`).
+- **`sys-systemd-watch` CLI** (`src/sysadmin_tools/sys_systemd_watch.py`): zero-subprocess `/sys/fs/cgroup` v2, `/proc`, and journal-directory investigator tracking per-unit memory pressure & OOM events, CFS CPU throttling, I/O PSI, rapid PID-churn service crash-loops, and journal directory byte-growth bursts with deterministic classification (`MEMORY_PRESSURE`, `CRASH_LOOP_SUSPECTED`, `IO_PRESSURE`, `CPU_THROTTLING`, `JOURNAL_BURST`, `HEALTHY`).
+- **Offline JSONL Trend Differ in `sys-investigate`**: `--diff-log PATH`, `--diff-baseline PATH`, and `--diff-window N` summarize and compare `--append-log` JSONL files (`STABLE_HEALTHY`, `RECOVERING`, `INTERMITTENT_ISSUES`, `PERSISTENT_ISSUE`, `DEGRADING`, `SINGLE_SNAPSHOT_HEALTHY`, `SINGLE_SNAPSHOT_ISSUE`), detect corrupt JSONL lines gracefully, and rank recurring offenders; also added `--version`.
+- **User systemd Sampler Templates** (`packaging/systemd/`): ready-to-install `sys-investigate-sampler.service`, `sys-investigate-sampler.timer`, and `packaging/systemd/README.md` (`Nice=10`, `IOSchedulingClass=best-effort`, `MemoryMax=128M`, `--no-statvfs`).
+- **Hardened CI & GitHub Pages Showcase**:
+  - SHA-pinned GitHub Actions CI (`.github/workflows/ci.yml`) running `./scripts/verify.sh` and `./scripts/install.sh --dry-run` with `paths-ignore` to conserve CI minutes.
+  - Interactive GitHub Pages showcase site (`docs/index.html`, `docs/.nojekyll`) and SHA-pinned deployment workflow (`.github/workflows/pages.yml`).
+- **v0.5.0 Brand Icons & Synchronized Docs**:
+  - Added `icon-net-watch.svg` and `icon-systemd-watch.svg` (`64x64`), expanded `architecture-overview.svg` (`1120x520`) for all 7 CLIs and `--diff-log`, updated `logo.svg`/`logo.png` and `incident-triage-workflow.svg` via `scripts/render_assets.py`.
+  - Added Chapter 7 ([`07-network-and-systemd-watch.md`](docs/user-guide/07-network-and-systemd-watch.md)) and synchronized all docs, buildspec, and diagrams to `v0.5.0`.
+
+### Changed
+- Updated `pyproject.toml`, `src/sysadmin_tools/__init__.py`, and `scripts/install.sh` to package and install all 7 standalone CLIs (`v0.5.0`).
+- Expanded verification baseline to **166 passing tests** (`unit` 143 tests, `smoke` 23 tests via `./scripts/verify.sh`).
+
 ## [v0.4.0] - 2026-11-22
 
 ### Added

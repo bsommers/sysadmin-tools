@@ -5,12 +5,14 @@ flowchart TD
         SRC --> COPY
     end
 
-    subgraph CLIS["5 Standalone Diagnostic & Guard CLIs"]
-        INV["sys-investigate\n(CPU, Load, PSI, Disk, NVMe Thermal, Cgroup, --progress-check, --diagnose-pid)"]
+    subgraph CLIS["7 Standalone Diagnostic & Guard CLIs"]
+        INV["sys-investigate\n(CPU, Load, PSI, Disk, NVMe Thermal, Cgroup, --progress-check, --diagnose-pid, --diff-log)"]
         IOG["sys-io-guard\n(Per-Disk Flock, CARGO_BUILD_JOBS Cap, os.nice, Direct subprocess.run)"]
         MEM["sys-mem-watch\n(Two-Snapshot RSS, Swap, vmstat, PSI, oom_score)"]
         HOG["sys-disk-hogs\n(Iterative os.scandir, Hardlink Dedup, Single-FS, Regenerable vs .git)"]
         TRI["sys-crash-triage\n(Post-Crash Forensics, AMD FCH S5_RESET_STATUS Decoder)"]
+        NET["sys-net-watch\n(/proc/net/{dev,tcp*,udp*,snmp,softnet_stat} Link, Drops, Retrans, Sockets)"]
+        SYSW["sys-systemd-watch\n(/sys/fs/cgroup v2 Memory/CPU/IO Pressure, Service Churn, Journal Bursts)"]
     end
 
     COPY --> INV
@@ -18,13 +20,15 @@ flowchart TD
     COPY --> MEM
     COPY --> HOG
     COPY --> TRI
+    COPY --> NET
+    COPY --> SYSW
 
     subgraph KERNEL["Direct Kernel Pseudo-FS & System Data Sources"]
-        PROC["/proc\n(stat, loadavg, meminfo, vmstat, pressure/*, mounts, diskstats, pid/*)"]
-        SYS["/sys\n(block/dm-*/slaves, block/*/stat, nvme hwmon thermals, firmware)"]
+        PROC["/proc\n(stat, loadavg, meminfo, vmstat, pressure/*, mounts, diskstats, net/*, pid/*)"]
+        SYS["/sys\n(block/dm-*/slaves, block/*/stat, nvme hwmon thermals, firmware, fs/cgroup)"]
         TMPFS["Lock Dir on tmpfs/root\n($XDG_RUNTIME_DIR/sys-io-guard or /tmp + .meta JSON)"]
         FSWALK["Target Filesystem Tree\n(os.scandir follow_symlinks=False, st_dev boundary, safe statvfs)"]
-        LOGS["Crash & Boot Artifacts\n(/var/log/kern.log, syslog, pstore, /var/crash, kdump-tools, optional journalctl)"]
+        LOGS["Crash, Boot & Journal Artifacts\n(/var/log/kern.log, syslog, pstore, /var/crash, kdump-tools, journal dirs/journalctl)"]
     end
 
     INV -->|"Hot-path direct read (--no-statvfs safe)"| PROC
@@ -37,9 +41,13 @@ flowchart TD
     TRI -->|"Boot & kernel state"| PROC
     TRI -->|"Hardware/reset metadata"| SYS
     TRI -->|"Bounded log & dump scan (--no-journalctl opt-out)"| LOGS
+    NET -->|"Two-snapshot pure /proc/net/* read"| PROC
+    SYSW -->|"Cgroup v2 & PID state read"| SYS
+    SYSW -->|"PID stat/cgroup mapping"| PROC
+    SYSW -->|"Journal dir size delta"| LOGS
 
     subgraph CONTRACTS["Output & Unified Exit-Code Contracts"]
-        OUT["Structured Output\n(Human Report, --json, --append-log)"]
+        OUT["Structured Output\n(Human Report, --markdown, --json, --append-log / --diff-log)"]
         EX0["Exit 0: Healthy / OK"]
         EX1["Exit 1: Validation or Runtime Error"]
         EX2["Exit 2: Argparse Usage Error"]
@@ -52,6 +60,8 @@ flowchart TD
     MEM --> OUT
     HOG --> OUT
     TRI --> OUT
+    NET --> OUT
+    SYSW --> OUT
 
     OUT --> EX0
     OUT --> EX1

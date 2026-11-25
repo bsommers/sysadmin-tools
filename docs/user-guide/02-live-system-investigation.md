@@ -43,6 +43,10 @@ sys-investigate --watch 5 --interval 2
 # Protect against hung mounts + record JSONL telemetry + scriptable exit code
 sys-investigate --no-statvfs --append-log /var/tmp/sys-investigate.jsonl --exit-on-issue
 
+# Summarize trends or diff cohorts offline across recorded JSONL logs
+sys-investigate --diff-log /var/tmp/sys-investigate.jsonl --diff-window 5
+sys-investigate --diff-log after.jsonl --diff-baseline before.jsonl --json
+
 # Emit deterministic JSON or GitHub-flavored Markdown
 sys-investigate --json | jq '.verdict'
 sys-investigate --markdown
@@ -53,7 +57,7 @@ sys-investigate --markdown
 | Flag | Range / Default | Environment Variable | Purpose |
 |---|---|---|---|
 | `--interval SEC` | `0.2..60.0` (default `2.0`) | `SYS_INVESTIGATE_INTERVAL` | Sampling window in seconds between snapshot 1 and snapshot 2. |
-| `--top N` | `1..100` (default `10`) | `SYS_INVESTIGATE_TOP` | Maximum rows shown per table (`d_state_top`, `top_cpu`, `top_io`, `overlapping_workloads`, `top_descendants`). |
+| `--top N` | `1..100` (default `10`) | `SYS_INVESTIGATE_TOP` | Maximum rows shown per table (`d_state_top`, `top_cpu`, `top_io`, `overlapping_workloads`, `top_descendants`, `recurring_offenders`). |
 | `--json` | flag (mutually exclusive with `--markdown`) | — | Emit deterministic JSON (`sort_keys=True`) to stdout. |
 | `--markdown` | flag (mutually exclusive with `--json`) | — | Emit GitHub-flavored Markdown tables/headers to stdout. |
 | `--watch [COUNT]` | `>= 0` (`0` or omitted = infinite until Ctrl-C) | — | Repeat investigation `COUNT` times. |
@@ -61,8 +65,12 @@ sys-investigate --markdown
 | `--diagnose-pid PID` | integer `> 0` | — | Run a targeted two-snapshot diagnosis of `PID` and its descendant process tree. |
 | `--no-statvfs` | flag | — | Skip `os.statvfs()` mount fill percentage checks for maximum hang immunity. |
 | `--append-log PATH` | file path | — | Append one compact JSONL line per sample to `PATH` (creates parent dirs automatically). |
-| `--exit-on-issue` | flag | — | Exit with code `3` when `verdict.is_issue` is `true` (last run in `--watch` mode). |
+| `--diff-log PATH` | file path | — | Offline mode: summarize trends and diff snapshots in an `--append-log` JSONL file (cannot combine with `--diagnose-pid`, `--progress-check`, `--watch`, or `--append-log`). |
+| `--diff-baseline PATH` | file path | — | Baseline JSONL log file to compare against `--diff-log PATH`. |
+| `--diff-window N` | integer `>= 1` | — | Compare the last `N` snapshots against the prior `N` snapshots (or last `N` of `--diff-baseline`). |
+| `--exit-on-issue` | flag | — | Exit with code `3` when `verdict.is_issue` is `true` (last run in `--watch` mode, or degrading/persistent trend in `--diff-log` mode). |
 | `--verbose` | flag | — | Print effective configuration to `stderr`. |
+| `--version` | flag | — | Print `sys-investigate 0.5.0` and exit. |
 
 **Exit codes:** `0` healthy / ok (or Ctrl-C), `1` validation / missing-PID / runtime error, `2` CLI usage error, `3` issue detected with `--exit-on-issue`.
 
@@ -221,6 +229,33 @@ sys-investigate --diagnose-pid 12345 --interval 2
 ```bash
 sys-investigate --watch 30 --interval 5 --no-statvfs --append-log /var/tmp/sys-investigate.jsonl
 ```
+
+---
+
+## 8. Offline JSONL Trend Analysis (`--diff-log`)
+
+When a systemd timer or `--watch --append-log` run captures snapshots over hours, use `--diff-log` offline to spot degradation, compare cohorts, and rank recurring offenders without running a live probe:
+
+```bash
+# 1. Single-file trend summary (early half vs late half)
+sys-investigate --diff-log ~/.local/state/sysadmin-tools/investigate.jsonl
+
+# 2. Sliding-window comparison: last 5 snapshots vs prior 5 snapshots
+sys-investigate --diff-log ~/.local/state/sysadmin-tools/investigate.jsonl --diff-window 5 --exit-on-issue
+
+# 3. Baseline vs incident log comparison (JSON or Markdown)
+sys-investigate --diff-log incident.jsonl --diff-baseline healthy-baseline.jsonl --markdown
+```
+
+**How `--diff-log` classifies trends (`verdict.status`):**
+- `STABLE_HEALTHY` (`is_issue=False`): low or zero issue rate and no metric degradation.
+- `RECOVERING` (`is_issue=False`): earlier snapshots had issues, recent cohort issue rate dropped below baseline and below `50%`.
+- `INTERMITTENT_ISSUES` (`is_issue=True` if recent issue rate `>= 50%`): periodic spikes (`>= 25%` issue rate in either cohort) without sustained degradation.
+- `PERSISTENT_ISSUE` (`is_issue=True`): latest snapshot is an issue and baseline already had `>= 50%` issue rate (or started unhealthy).
+- `DEGRADING` (`is_issue=True`): flipped from healthy to issue, issue rate rose `>= +20%`, or cohort averages degraded materially (`dirty_gib >= +1.5` & `>= 2.0`, `max_w_await_ms >= +50ms` & `>= 50ms`, `disk_util >= +20%` & `>= 85%`, `cpu_wa >= +15%` & `>= 20%`, `mem_avail <= -4.0 GiB` & `< 2.0 GiB`, or `d_threads >= +8` & `>= 12`).
+- `SINGLE_SNAPSHOT_HEALTHY` / `SINGLE_SNAPSHOT_ISSUE`: emitted when the log contains only 1 valid snapshot.
+
+Corrupt or partial JSONL lines are skipped with a warning to `stderr` and counted in `summary.corrupt_line_count`.
 
 ---
 

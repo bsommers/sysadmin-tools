@@ -16,11 +16,13 @@ flowchart TD
         SMW["sys-mem-watch"]
         SDH["sys-disk-hogs"]
         SCT["sys-crash-triage"]
+        SNW["sys-net-watch"]
+        SSW["sys-systemd-watch"]
     end
 
     subgraph KernelFS["Kernel Virtual Filesystems (Zero Disk I/O)"]
-        PROC["/proc (stat, diskstats, meminfo, vmstat, pressure, mounts, pid/*)"]
-        SYS["/sys (nvme hwmon, thermal_zone, drm gpu_busy, block/dm-*/slaves, edac)"]
+        PROC["/proc (stat, diskstats, meminfo, vmstat, pressure, mounts, net/*, pid/*)"]
+        SYS["/sys (nvme hwmon, thermal_zone, drm gpu_busy, block/dm-*/slaves, edac, fs/cgroup)"]
     end
 
     subgraph TmpfsLocks["Tmpfs / Runtime Lock Plane ($XDG_RUNTIME_DIR or /tmp)"]
@@ -28,19 +30,23 @@ flowchart TD
     end
 
     subgraph HostLogs["Persistent Host Logs & Workspaces"]
-        LOGS["/var/log/{kern.log,syslog}, pstore, /var/crash, kdump-tools, journald"]
+        LOGS["/var/log/{kern.log,syslog}, pstore, /var/crash, kdump-tools, journal dirs/journald"]
         WORK["Workspaces & Secondary SSDs (/datanapps, Cargo target, node_modules)"]
     end
 
     subgraph Outputs["Deterministic Script-First Outputs"]
         OUT["stdout: Text / Markdown / JSON (sort_keys=True)"]
-        JSONL["--append-log: Compact JSONL"]
+        JSONL["--append-log / --diff-log: Compact JSONL"]
         RC["Exit Codes: 0 / 1 / 2 / 3 / 4"]
     end
 
     SI --> PROC
     SI --> SYS
     SMW --> PROC
+    SNW --> PROC
+    SSW --> PROC
+    SSW --> SYS
+    SSW --> LOGS
     SIG --> PROC
     SIG --> SYS
     SIG --> FLOCK
@@ -55,6 +61,8 @@ flowchart TD
     SDH --> OUT
     SCT --> OUT
     SIG --> OUT
+    SNW --> OUT
+    SSW --> OUT
     SI --> JSONL
     SMW --> JSONL
     SCT --> JSONL
@@ -105,6 +113,7 @@ sequenceDiagram
   - NVMe thermal monitoring (`NORMAL`, `WARM`, `CRITICAL`) directly from `/sys/class/nvme/nvme*/hwmon*`.
   - `--progress-check`: runs two consecutive sampling windows and invokes `compare_windows()` to distinguish transient spikes from confirmed stalls (`CONFIRMED_STALL`, `PERSISTENT_THRASH`, `RECOVERING`, `WORSENING`, `IDLE`, `STEADY_PROGRESS`).
   - `--diagnose-pid PID`: two-snapshot drill-down of a single target PID and its entire descendant process subtree (CPU, RSS, swap, OOM score, disk R/W vs `wchar`, thread states, D-state `wchan` breakdown).
+  - `--diff-log PATH` (`--diff-baseline`, `--diff-window`): offline JSONL trend analyzer comparing early vs late halves, sliding `prior N` vs `last N` cohorts, or a baseline file vs target file (`STABLE_HEALTHY`, `RECOVERING`, `INTERMITTENT_ISSUES`, `PERSISTENT_ISSUE`, `DEGRADING`), skipping corrupt lines safely and surfacing recurring `D`-state / I/O / CPU offenders.
 
 ### 4.2 `sys-io-guard` (`src/sysadmin_tools/sys_io_guard.py`)
 - **Device resolution:** Resolves `--path` (default `$CARGO_TARGET_DIR` or cwd) against `/proc/mounts` (longest mountpoint prefix), traverses `/sys/block/dm-*/slaves` for LVM/LUKS/device-mapper stacks to find the backing physical disk (`nvme2n1`, `sda`, `mmcblk0`), or falls back to `mnt-<sha1[:8]>` for virtual/network filesystems.
@@ -131,6 +140,14 @@ sequenceDiagram
   4. **Signature engine with noise suppression:** Filters known benign noise (`audit: type=1326`, `qt.bluetooth.bluez`, `ring ... uses VM inv eng`) and classifies lines into `fatal` vs `context` buckets across `kernel_panic`, `mce_hardware`, `thermal`, `oom_killer`, `watchdog_lockup`, `gpu_fault`, and `storage_fault`.
   5. **Crash-capture readiness audit:** Inspects `/etc/default/kdump-tools` (`USE_KDUMP`) vs `/proc/cmdline` (`crashkernel=`), `/sys/fs/pstore`, `/var/lib/systemd/pstore`, `/var/crash`, `/sys/devices/system/edac/mc/mc*/{ce_count,ue_count}`, and `/var/log/unattended-upgrades/unattended-upgrades.log`.
 - **Pure-file fallback:** `--no-journalctl` skips all `journalctl` subprocesses and relies solely on `/proc`, `/sys`, `/var/log/*`, pstore, and `/var/crash`.
+
+### 4.6 `sys-net-watch` (`src/sysadmin_tools/sys_net_watch.py`)
+- **Telemetry sources:** `/proc/net/dev`, `/proc/net/{tcp,tcp6}`, `/proc/net/{udp,udp6}`, `/proc/net/snmp`, `/proc/net/softnet_stat`.
+- **Delta & queue engine:** Collects `--samples` snapshots spaced by `--interval` seconds (using 32-bit wrap-safe `_delta_u32` for `softnet_stat`), computes RX/TX `kbps`, `pps`, interface link/drop/collision deltas, SNMP TCP retransmit rate (`RetransSegs / OutSegs`), and inspects hex `tx_queue:rx_queue` pairs across all IPv4/IPv6 sockets alongside `CLOSE_WAIT` growth (`close_wait_delta`).
+
+### 4.7 `sys-systemd-watch` (`src/sysadmin_tools/sys_systemd_watch.py`)
+- **Telemetry sources:** `/sys/fs/cgroup` v2 (`memory.*`, `cpu.*`, `io.*`, `pids.*`, `cgroup.procs`), `/proc` (`uptime`, `<pid>/{stat,cgroup}`), and `/run/log/journal` + `/var/log/journal` metadata (`os.scandir()`).
+- **Unit & churn engine:** Iteratively discovers `*.service`, `*.scope`, and `*.slice` directories (filtered via `--unit`), measures multi-snapshot memory OOM/PSI, CFS CPU throttling (`throttled_usec` / `nr_throttled`), I/O MB/s + PSI, process `D`/`Z` states, service crash-loop PID turnover (`full_pid_replacements` or rapid `+added/-exited`), and journal directory byte-growth bursts with zero `systemctl` or `journalctl` subprocesses.
 
 ## 5. Deterministic Verdict Rules
 
@@ -190,6 +207,27 @@ All classifiers enforce a strict invariant: whenever `is_issue` is `True`, at le
 | `general-cache` | Yes | `.cache`, `.cargo`, `.npm`, `.pnpm-store`, `.yarn`, `go-build` |
 | `vcs-metadata` | **No** | `.git` (tracked separately; excluded from `reclaimable_bytes`) |
 
+### 5.6 `sys-net-watch` (Network Verdict, Priority Order)
+
+| Priority | Status | `is_issue` | Trigger Rule |
+| --- | --- | --- | --- |
+| 1 | `LINK_ERRORS` | `True` | `link_errors_delta >= 1` OR `tx_colls_delta >= 10` OR `tcp_in_errs >= 5` OR `tcp_csum_errs >= 1` OR `udp_csum_errs >= 1` |
+| 2 | `PACKET_DROPS` | `True` | `iface_drops_delta >= 5` OR `softnet_drops >= 1` OR `softnet_time_squeeze >= 50` OR `udp_buf_errs >= 1` OR `udp_in_errs >= 5` OR `udp_mem_errs >= 1` |
+| 3 | `ELEVATED_RETRANSMITS` | `True` | (`retrans >= 5` & `retrans_rate >= 1.0%`) OR `retrans >= 50` OR `estab_resets >= 20` OR `attempt_fails >= 20` |
+| 4 | `SOCKET_PRESSURE` | `True` | `CLOSE_WAIT >= 50` (or `>= 20` & delta `>= 10`) OR `TIME_WAIT >= 2000` OR `SYN_RECV/SENT >= 100` OR `FIN_WAIT1/2+LAST_ACK >= 500` OR `udp_queue >= 256 KiB` / `>= 20` sockets OR `tcp_queue >= 16 MiB` |
+| 5 | `HEALTHY` | `False` | None of the above |
+
+### 5.7 `sys-systemd-watch` (Cgroup Verdict, Priority Order)
+
+| Priority | Status | `is_issue` | Trigger Rule |
+| --- | --- | --- | --- |
+| 1 | `MEMORY_PRESSURE` | `True` | `oom`/`oom_kill` events > 0, `max` delta > 0, `high` delta >= 5, `memory.pressure` `full10 >= 5%` / `some10 >= 15%`, or `memory.current >= 95%` of `memory.max` |
+| 2 | `CRASH_LOOP_SUSPECTED` | `True` | `*.service` unit with `full_pid_replacements >= 1`, rapid churn (`+>=2 / ->=2`), or newly restarted young PIDs (`max_age <= 3s`) with exit/zombie/OOM |
+| 3 | `IO_PRESSURE` | `True` | `io.pressure` `full10 >= 10%` / `some10 >= 25%`, large PSI delta, or `d_state_pids >= 4` with active I/O / PSI |
+| 4 | `CPU_THROTTLING` | `True` | `throttled_pct >= 10%`, `d_throttled >= 3` & ratio `>= 20%`, `cpu.pressure` `some10 >= 25%` / `full10 >= 10%`, or sustained lifetime throttling |
+| 5 | `JOURNAL_BURST` | `True` | Journal directory growth `>= 1.0 MiB/s` AND `>= 512 KiB` in window |
+| 6 | `HEALTHY` | `False` | None of the above |
+
 ## 6. JSON & JSONL Schema Conventions
 
 All JSON-capable CLIs emit deterministic output (`json.dumps(..., sort_keys=True)`) with ISO-8601 local timestamps (`timestamp`) and rounded numeric metrics. `--append-log PATH` writes one compact JSON line per sample (`separators=(",", ":")` on `sys-investigate`/`sys-mem-watch`, single-line JSON on `sys-crash-triage`) and creates parent directories automatically.
@@ -198,11 +236,14 @@ All JSON-capable CLIs emit deterministic output (`json.dumps(..., sort_keys=True
 | --- | --- |
 | `sys-investigate` (default) | `cpu_pct`, `d_state_top`, `d_state_wchans`, `disks`, `gpus`, `load`, `memory`, `nvme_health`, `overlapping_workloads`, `psi`, `sample_sec`, `thermal_zones`, `timestamp`, `top_cpu`, `top_io`, `turnover`, `verdict` (+ `progress_check` when `--progress-check` is set) |
 | `sys-investigate --diagnose-pid` | `mode` (`"pid"`), `sample_sec`, `subtree`, `target`, `threads`, `timestamp`, `verdict` |
+| `sys-investigate --diff-log` | `baseline_path`, `baseline_summary`, `comparison_mode`, `earliest_vs_latest`, `log_path`, `mode` (`"diff_log"`), `recurring_offenders`, `summary`, `verdict`, `version`, `window_diff`, `window_requested` |
 | `sys-io-guard --status --json` | `active_count`, `idle_count`, `lock_dir`, `locks` (array of `{active, holder, lock_file, lock_key, meta_file, stale_meta, state}`) |
 | `sys-io-guard --dry-run --json` | `cargo_jobs`, `command`, `device`, `disk`, `env_overrides`, `fstype`, `lock_dir`, `lock_file`, `lock_key`, `lock_key_source`, `meta_file`, `mountpoint`, `nice`, `target_path`, `timeout` |
 | `sys-mem-watch` | `memory`, `psi`, `sample_sec`, `timestamp`, `top_growers`, `top_oom_risk`, `top_rss`, `top_swap`, `turnover`, `verdict` |
 | `sys-disk-hogs` | `largest_files`, `options`, `reclaimable_hogs`, `summary`, `timestamp`, `top_dirs`, `vcs_metadata` |
 | `sys-crash-triage` | `boots_history`, `crash_capture`, `hardware_reset`, `manual_steps`, `nul_log_scans`, `previous_boot_tail`, `signatures`, `system`, `target_boot_index`, `timestamp`, `transition`, `unclean_evidence`, `verdict`, `warnings` |
+| `sys-net-watch` | `iface_filter`, `interfaces`, `interfaces_summary`, `sample_sec`, `samples`, `snmp`, `sockets`, `softnet`, `timestamp`, `verdict`, `version` |
+| `sys-systemd-watch` | `cgroup_root`, `journal`, `problem_units`, `sample_sec`, `samples`, `summary`, `timestamp`, `top_cpu`, `top_io`, `top_memory`, `top_slices`, `unit_filter`, `verdict`, `version` |
 
 ---
 

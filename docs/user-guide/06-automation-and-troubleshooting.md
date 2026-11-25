@@ -58,18 +58,28 @@ sys-disk-hogs ~/src /datanapps --json | jq '{reclaimable_gib: .summary.reclaimab
 sys-crash-triage --json | jq '{verdict: .verdict.status, confidence: .verdict.confidence, reset: .hardware_reset.reset_class, kdump_misconfigured: .crash_capture.kdump.reserved_but_disabled}'
 ```
 
+### `sys-net-watch` & `sys-systemd-watch`
+
+```bash
+# Network summary: status, interface drops/link errors, and TCP retransmits
+sys-net-watch --json | jq '{status: .verdict.status, drops: .interfaces_summary.drops_delta, retrans_pct: .snmp.tcp.retrans_rate_pct, softnet_drops: .softnet.dropped_delta}'
+
+# Systemd cgroup summary: status, flagged units, and journal growth
+sys-systemd-watch --json | jq '{status: .verdict.status, active_issues: .verdict.active_issues, problem_units: [.problem_units[] | {unit, issues}]}'
+```
+
 ---
 
 ## 2. Exit-Code Alerting Matrix
 
-| Exit Code | `sys-investigate` | `sys-mem-watch` | `sys-crash-triage` | `sys-io-guard` | `sys-disk-hogs` |
-|---|---|---|---|---|---|
-| **`0`** | Healthy / OK | `HEALTHY` / OK | Clean / OK | Child `0`, or `--status`/`--dry-run` OK | OK |
-| **`1`** | Validation / missing PID / runtime error | Validation / runtime error | Validation / runtime error | Validation / runtime error | Validation / missing path / runtime error |
-| **`2`** | `argparse` usage error | `argparse` usage error | `argparse` usage error | `argparse` usage error | `argparse` usage error |
-| **`3`** | Issue detected (`--exit-on-issue`) | Status `!= HEALTHY` (`--exit-on-issue`) | Crash/fault detected (`--exit-on-issue`) | *(not used)* | *(not used)* |
-| **`4`** | *(not used)* | *(not used)* | *(not used)* | Lock busy after `--timeout` | *(not used)* |
-| **Other** | — | — | — | Child's exit code (`128+sig` on signal) | — |
+| Exit Code | `sys-investigate` | `sys-mem-watch` | `sys-crash-triage` | `sys-net-watch` | `sys-systemd-watch` | `sys-io-guard` | `sys-disk-hogs` |
+|---|---|---|---|---|---|---|---|
+| **`0`** | Healthy / OK | `HEALTHY` / OK | Clean / OK | `HEALTHY` / OK | `HEALTHY` / OK | Child `0`, or `--status`/`--dry-run` OK | OK |
+| **`1`** | Validation / missing PID / log error | Validation / runtime error | Validation / runtime error | Validation / missing iface / runtime error | Validation / missing cgroup root / error | Validation / runtime error | Validation / missing path / runtime error |
+| **`2`** | `argparse` usage error | `argparse` usage error | `argparse` usage error | `argparse` usage error | `argparse` usage error | `argparse` usage error | `argparse` usage error |
+| **`3`** | Issue detected (`--exit-on-issue`) | Status `!= HEALTHY` (`--exit-on-issue`) | Crash/fault detected (`--exit-on-issue`) | Status `!= HEALTHY` (`--exit-on-issue`) | Status `!= HEALTHY` (`--exit-on-issue`) | *(not used)* | *(not used)* |
+| **`4`** | *(not used)* | *(not used)* | *(not used)* | *(not used)* | *(not used)* | Lock busy after `--timeout` | *(not used)* |
+| **Other** | — | — | — | — | — | Child's exit code (`128+sig` on signal) | — |
 
 ### Example Alerting Wrapper
 
@@ -92,55 +102,30 @@ fi
 
 `sys-investigate`, `sys-mem-watch`, and `sys-crash-triage` all support `--append-log PATH`, writing one compact JSON object per line and creating parent directories automatically.
 
-### Querying JSONL Logs with `jq`
+### Querying & Diffing JSONL Logs (`jq` + `--diff-log`)
 
 ```bash
 # Find every recorded incident window in a JSONL telemetry log
-jq -c 'select(.verdict.is_issue == true) | {ts: .timestamp, b: .verdict.bottleneck, p: .verdict.productivity, dirty: .memory.dirty_gib}' /var/tmp/sys-investigate.jsonl
+jq -c 'select(.verdict.is_issue == true) | {ts: .timestamp, b: .verdict.bottleneck, p: .verdict.productivity, dirty: .memory.dirty_gib}' ~/.local/state/sysadmin-tools/investigate.jsonl
+
+# Offline trend summary and sliding-window diff
+sys-investigate --diff-log ~/.local/state/sysadmin-tools/investigate.jsonl --diff-window 5
 ```
 
-### Setting Up a Periodic Systemd User Timer
+### Setting Up the Packaged Systemd User Timer (`packaging/systemd/`)
 
-Create a lightweight systemd user unit that records a 2-second system snapshot every 5 minutes (and logs a warning to the user journal whenever exit code `3` triggers):
-
-**`~/.config/systemd/user/sys-investigate-telemetry.service`**
-
-```ini
-[Unit]
-Description=Record sys-investigate JSONL telemetry snapshot
-
-[Service]
-Type=oneshot
-ExecStart=%h/.local/bin/sys-investigate --interval 2 --no-statvfs --exit-on-issue --append-log /var/tmp/sys-investigate.jsonl --json
-StandardOutput=null
-SuccessExitStatus=0 3
-```
-
-**`~/.config/systemd/user/sys-investigate-telemetry.timer`**
-
-```ini
-[Unit]
-Description=Run sys-investigate telemetry every 5 minutes
-
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=5min
-AccuracySec=15s
-Persistent=false
-
-[Install]
-WantedBy=timers.target
-```
-
-Enable and verify the timer:
+Ready-to-use user unit templates live in [`packaging/systemd/`](../../packaging/systemd/README.md) (`Nice=10`, `IOSchedulingClass=best-effort`, `MemoryMax=128M`, `--no-statvfs`, writing to `~/.local/state/sysadmin-tools/investigate.jsonl` every 5 minutes):
 
 ```bash
+mkdir -p ~/.config/systemd/user
+cp packaging/systemd/sys-investigate-sampler.service ~/.config/systemd/user/
+cp packaging/systemd/sys-investigate-sampler.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now sys-investigate-telemetry.timer
-systemctl --user list-timers 'sys-investigate*'
+systemctl --user enable --now sys-investigate-sampler.timer
+systemctl --user list-timers sys-investigate-sampler.timer
 ```
 
-> **Tip:** Pair this with a simple `logrotate` rule (or periodic truncation) for `/var/tmp/sys-investigate.jsonl` so long-running telemetry stays bounded.
+> **Tip:** Pair this with a simple `logrotate` rule (or periodic truncation) for `~/.local/state/sysadmin-tools/investigate.jsonl` so long-running telemetry stays bounded, and run `./scripts/verify.sh` locally to mirror [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
 
 ---
 
@@ -193,4 +178,4 @@ In `/proc/<pid>/io`, `wchar` counts **all** bytes written via `write()` syscalls
 
 ---
 
-**Navigation:** [← Previous: Chapter 5 — Post-Crash Forensics](05-post-crash-forensics.md) | [↑ Back to User's Guide](README.md) | [↑ Project README](../../README.md)
+**Navigation:** [← Previous: Chapter 5 — Post-Crash Forensics](05-post-crash-forensics.md) | [Next: Chapter 7 — Network & Systemd Cgroup Watch →](07-network-and-systemd-watch.md) | [↑ Back to User's Guide](README.md)

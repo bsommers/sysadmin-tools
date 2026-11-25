@@ -8,6 +8,7 @@ import re
 import shlex
 import sys
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -133,6 +134,93 @@ class TestSystemdPackagingTemplates(unittest.TestCase):
         readme = SYSTEMD_README.read_text(encoding="utf-8")
         self.assertIn("~/.config/systemd/user", readme)
         self.assertIn("sys-investigate-sampler.timer", readme)
+
+
+class TestGitHubPagesShowcase(unittest.TestCase):
+    PAGES_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "pages.yml"
+    DOCS_DIR = REPO_ROOT / "docs"
+    INDEX_HTML = DOCS_DIR / "index.html"
+    NOJEKYLL = DOCS_DIR / ".nojekyll"
+
+    def test_pages_workflow_hardened_and_sha_pinned(self) -> None:
+        self.assertTrue(self.PAGES_WORKFLOW.is_file(), f"missing {self.PAGES_WORKFLOW}")
+        text = self.PAGES_WORKFLOW.read_text(encoding="utf-8")
+        for required in (
+            "permissions:",
+            "contents: read",
+            "pages: write",
+            "id-token: write",
+            "concurrency:",
+            "timeout-minutes:",
+            "persist-credentials: false",
+            "runs-on: ubuntu-latest",
+        ):
+            self.assertIn(required, text)
+        self.assertNotIn("pull_request_target", text)
+
+        uses_lines = [line for line in text.splitlines() if ANY_USES_RE.match(line)]
+        self.assertGreaterEqual(len(uses_lines), 4)
+        for line in uses_lines:
+            self.assertRegex(line, SHA_PIN_RE, f"action must be pinned to 40-hex SHA: {line!r}")
+
+        for block in _extract_run_blocks(text):
+            self.assertNotIn("${{", block, f"unsafe expression interpolation in run block: {block!r}")
+            self.assertNotIn("github.event.", block)
+
+    def test_docs_index_html_local_links_and_nojekyll(self) -> None:
+        self.assertTrue(self.NOJEKYLL.is_file(), f"missing {self.NOJEKYLL}")
+        self.assertTrue(self.INDEX_HTML.is_file(), f"missing {self.INDEX_HTML}")
+        html = self.INDEX_HTML.read_text(encoding="utf-8")
+        self.assertNotIn("/home/", html)
+
+        # No external script, stylesheet, or webfont CDNs.
+        self.assertIsNone(re.search(r"<script[^>]+src=[\"']https?://", html, re.IGNORECASE))
+        self.assertIsNone(re.search(r"<link[^>]+rel=[\"']stylesheet[\"'][^>]+href=[\"']https?://", html, re.IGNORECASE))
+        self.assertIsNone(re.search(r"@import\s+url\([\"']?https?://", html, re.IGNORECASE))
+
+        expected_assets = (
+            "assets/logo.svg",
+            "assets/icon.svg",
+            "assets/logo.png",
+            "assets/icons/icon-investigate.svg",
+            "assets/icons/icon-io-guard.svg",
+            "assets/icons/icon-mem-watch.svg",
+            "assets/icons/icon-disk-hogs.svg",
+            "assets/icons/icon-crash-triage.svg",
+            "assets/icons/icon-net-watch.svg",
+            "assets/icons/icon-systemd-watch.svg",
+            "assets/examples/architecture-overview.svg",
+            "assets/examples/incident-triage-workflow.svg",
+        )
+        for asset in expected_assets:
+            self.assertIn(asset, html, f"missing asset reference in docs/index.html: {asset}")
+
+        docs_root = self.DOCS_DIR.resolve()
+        for attr in re.findall(r'(?:src|href)="([^"#]+)"', html):
+            if attr.startswith(("http://", "https://", "mailto:", "javascript:")):
+                continue
+            target = (self.DOCS_DIR / attr).resolve()
+            self.assertTrue(
+                target == docs_root or docs_root in target.parents,
+                f"relative link escapes docs/: {attr}",
+            )
+            self.assertTrue(target.exists(), f"broken local link in docs/index.html: {attr} -> {target}")
+
+    def test_svgs_valid_xml_and_no_external_urls(self) -> None:
+        svg_files = sorted((REPO_ROOT / "assets").rglob("*.svg")) + sorted(
+            (self.DOCS_DIR / "assets").rglob("*.svg")
+        )
+        self.assertGreaterEqual(len(svg_files), 11)
+        for svg in svg_files:
+            ET.parse(svg)
+            txt = svg.read_text(encoding="utf-8")
+            self.assertNotIn("/home/", txt, f"hardcoded /home/ path in {svg}")
+            urls = [
+                u
+                for u in re.findall(r"https?://[^\s\"'<>)]+", txt)
+                if u not in ("http://www.w3.org/2000/svg", "http://www.w3.org/1999/xlink")
+            ]
+            self.assertEqual(urls, [], f"unexpected external URLs in {svg}: {urls}")
 
 
 if __name__ == "__main__":

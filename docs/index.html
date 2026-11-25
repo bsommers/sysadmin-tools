@@ -1,0 +1,1381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>sysadmin-tools v0.5.0 — Zero-Dependency Linux Telemetry &amp; Guard Suite</title>
+  <meta name="description" content="7 standalone Python 3.10+ stdlib CLIs reading /proc and /sys directly for I/O storms, memory/swap leaks, disk hogs, network drops, systemd cgroup pressure, and crash forensics.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="sysadmin-tools v0.5.0 — Zero-Dependency Linux Telemetry &amp; Guard Suite">
+  <meta property="og:description" content="7 standalone Python 3.10+ stdlib CLIs reading /proc and /sys directly for I/O storms, memory/swap leaks, disk hogs, network drops, systemd cgroup pressure, and crash forensics.">
+  <meta property="og:image" content="assets/logo.png">
+  <meta property="og:url" content="https://bsommers.github.io/sysadmin-tools/">
+  <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+  <style>
+    :root {
+      --bg-void: #04070f;
+      --bg-deep: #050811;
+      --bg-panel: rgba(9, 17, 34, 0.88);
+      --bg-panel-solid: #0a1224;
+      --bg-terminal: #03060d;
+      --border-dim: rgba(56, 189, 248, 0.22);
+      --border-bright: rgba(0, 229, 255, 0.58);
+      --neon-cyan: #00e5ff;
+      --neon-sky: #38bdf8;
+      --neon-emerald: #00ff9d;
+      --neon-amber: #fbbf24;
+      --text-bright: #f0f6fc;
+      --text-body: #cbd5e1;
+      --text-muted: #94a3b8;
+      --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif;
+      --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+      --shadow-hud: 0 0 28px rgba(0, 229, 255, 0.12), inset 0 1px 0 rgba(0, 229, 255, 0.12);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font-sans);
+      color: var(--text-bright);
+      background-color: var(--bg-void);
+      background-image:
+        radial-gradient(ellipse 80% 45% at 50% 0%, rgba(0, 229, 255, 0.14), transparent 65%),
+        radial-gradient(circle at 85% 25%, rgba(0, 255, 157, 0.06), transparent 45%),
+        linear-gradient(rgba(0, 229, 255, 0.065) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 229, 255, 0.065) 1px, transparent 1px),
+        linear-gradient(rgba(56, 189, 248, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(56, 189, 248, 0.03) 1px, transparent 1px);
+      background-size: 100% 100%, 100% 100%, 96px 96px, 96px 96px, 24px 24px, 24px 24px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--neon-cyan); text-decoration: none; }
+    a:hover, a:focus-visible { text-decoration: underline; }
+    button:focus-visible, input:focus-visible, a:focus-visible {
+      outline: 2px solid var(--neon-cyan);
+      outline-offset: 2px;
+    }
+
+    .container {
+      width: min(1220px, 100% - 2rem);
+      margin: 0 auto;
+    }
+
+    /* HUD Corner Bracket Card */
+    .hud-card {
+      position: relative;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-dim);
+      border-radius: 12px;
+      box-shadow: var(--shadow-hud);
+      backdrop-filter: blur(8px);
+      transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .hud-card::before,
+    .hud-card::after {
+      content: "";
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      pointer-events: none;
+    }
+
+    .hud-card::before {
+      top: -1px;
+      left: -1px;
+      border-top: 2px solid var(--neon-cyan);
+      border-left: 2px solid var(--neon-cyan);
+      border-top-left-radius: 12px;
+    }
+
+    .hud-card::after {
+      bottom: -1px;
+      right: -1px;
+      border-bottom: 2px solid var(--neon-emerald);
+      border-right: 2px solid var(--neon-emerald);
+      border-bottom-right-radius: 12px;
+    }
+
+    /* Top Nav */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      background: rgba(4, 7, 15, 0.86);
+      border-bottom: 1px solid var(--border-dim);
+      backdrop-filter: blur(12px);
+    }
+
+    .topbar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.75rem 0;
+      flex-wrap: wrap;
+    }
+
+    .brand-mini {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--text-bright);
+    }
+
+    .brand-mini img { width: 26px; height: 26px; }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 1.15rem;
+      flex-wrap: wrap;
+      font-size: 0.9rem;
+    }
+
+    .nav-links a { color: var(--text-body); font-weight: 500; }
+    .nav-links a:hover { color: var(--neon-cyan); text-decoration: none; }
+
+    /* Hero */
+    .hero {
+      padding: 2.5rem 0 2rem;
+    }
+
+    .hero-banner-wrap {
+      padding: 1.25rem;
+      margin-bottom: 1.75rem;
+      overflow: hidden;
+    }
+
+    .hero-banner-wrap img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+      border: 1px solid rgba(0, 229, 255, 0.18);
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 1.5rem;
+      align-items: stretch;
+    }
+
+    .hero-copy { padding: 1.75rem; }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--neon-emerald);
+      margin-bottom: 0.7rem;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--neon-emerald);
+      box-shadow: 0 0 10px var(--neon-emerald);
+      animation: pulse 2.2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.82); }
+    }
+
+    h1 {
+      margin: 0 0 0.75rem;
+      font-size: clamp(1.75rem, 3.2vw, 2.55rem);
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+    }
+
+    .lead {
+      color: var(--text-body);
+      margin: 0 0 1.25rem;
+      font-size: 1.02rem;
+    }
+
+    .stat-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-bottom: 1.35rem;
+    }
+
+    .stat-pill {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid rgba(0, 229, 255, 0.35);
+      background: rgba(0, 229, 255, 0.08);
+      color: var(--neon-cyan);
+    }
+
+    .stat-pill.emerald {
+      border-color: rgba(0, 255, 157, 0.38);
+      background: rgba(0, 255, 157, 0.09);
+      color: var(--neon-emerald);
+    }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.62rem 1.05rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      border: 1px solid var(--border-bright);
+      background: rgba(0, 229, 255, 0.14);
+      color: var(--text-bright);
+      cursor: pointer;
+      transition: background 0.18s ease, transform 0.15s ease;
+    }
+
+    .btn:hover {
+      background: rgba(0, 229, 255, 0.24);
+      text-decoration: none;
+      transform: translateY(-1px);
+    }
+
+    .btn.secondary {
+      border-color: var(--border-dim);
+      background: rgba(15, 23, 42, 0.72);
+      color: var(--text-body);
+    }
+
+    .btn.secondary:hover {
+      border-color: var(--neon-sky);
+      color: var(--text-bright);
+    }
+
+    /* Quick Install Box */
+    .install-panel {
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .panel-label {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--neon-sky);
+    }
+
+    .terminal-box {
+      position: relative;
+      background: var(--bg-terminal);
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.84rem;
+      color: var(--neon-emerald);
+      overflow-x: auto;
+    }
+
+    .terminal-box pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      padding-right: 4.5rem;
+    }
+
+    .copy-btn {
+      position: absolute;
+      top: 0.55rem;
+      right: 0.55rem;
+      padding: 0.3rem 0.6rem;
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      border-radius: 6px;
+      border: 1px solid rgba(0, 229, 255, 0.35);
+      background: rgba(9, 17, 34, 0.92);
+      color: var(--neon-cyan);
+      cursor: pointer;
+    }
+
+    .copy-btn:hover { background: rgba(0, 229, 255, 0.16); }
+    .copy-btn.copied {
+      border-color: var(--neon-emerald);
+      color: var(--neon-emerald);
+    }
+
+    .install-notes {
+      margin: 0;
+      font-size: 0.87rem;
+      color: var(--text-muted);
+    }
+
+    /* Sections */
+    section { padding: 2.5rem 0; }
+
+    .section-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.5rem;
+    }
+
+    .section-head h2 {
+      margin: 0 0 0.3rem;
+      font-size: clamp(1.35rem, 2.2vw, 1.8rem);
+      letter-spacing: -0.01em;
+    }
+
+    .section-head p {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    /* CLI Explorer Controls */
+    .explorer-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1.4rem;
+      padding: 1rem 1.15rem;
+    }
+
+    .search-wrap {
+      flex: 1 1 260px;
+      position: relative;
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 0.62rem 0.9rem;
+      border-radius: 8px;
+      border: 1px solid var(--border-dim);
+      background: var(--bg-terminal);
+      color: var(--text-bright);
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+    }
+
+    .search-input::placeholder { color: var(--text-muted); }
+
+    .filter-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .filter-pill {
+      padding: 0.45rem 0.8rem;
+      border-radius: 999px;
+      border: 1px solid var(--border-dim);
+      background: rgba(15, 23, 42, 0.72);
+      color: var(--text-body);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .filter-pill[aria-pressed="true"] {
+      border-color: var(--neon-cyan);
+      background: rgba(0, 229, 255, 0.16);
+      color: var(--neon-cyan);
+    }
+
+    .cli-count {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--neon-emerald);
+    }
+
+    /* CLI Grid */
+    .cli-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .cli-card {
+      padding: 1.35rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+
+    .cli-card:hover {
+      border-color: var(--border-bright);
+      transform: translateY(-2px);
+    }
+
+    .cli-card.hidden { display: none; }
+
+    .cli-head {
+      display: flex;
+      align-items: center;
+      gap: 0.9rem;
+    }
+
+    .cli-icon {
+      width: 52px;
+      height: 52px;
+      flex-shrink: 0;
+      border-radius: 10px;
+      border: 1px solid rgba(0, 229, 255, 0.25);
+      background: rgba(3, 6, 13, 0.9);
+      padding: 4px;
+    }
+
+    .cli-title-wrap h3 {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 1.08rem;
+      color: var(--neon-cyan);
+    }
+
+    .cli-cat {
+      display: inline-block;
+      margin-top: 0.2rem;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--neon-emerald);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .cli-purpose {
+      margin: 0;
+      color: var(--text-body);
+      font-size: 0.93rem;
+    }
+
+    .cli-meta-block {
+      font-size: 0.83rem;
+      color: var(--text-muted);
+    }
+
+    .cli-meta-block strong {
+      color: var(--text-bright);
+      font-weight: 600;
+    }
+
+    .flag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin-top: 0.35rem;
+    }
+
+    .flag-chip {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      padding: 0.16rem 0.45rem;
+      border-radius: 5px;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.24);
+      color: var(--neon-sky);
+    }
+
+    .cli-cmd {
+      margin-top: auto;
+      padding: 0.65rem 0.8rem;
+      font-size: 0.78rem;
+    }
+
+    /* Visual Architecture Showcase */
+    .showcase-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .diagram-card {
+      padding: 1.15rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    .diagram-trigger {
+      display: block;
+      width: 100%;
+      padding: 0;
+      border: 1px solid rgba(0, 229, 255, 0.22);
+      border-radius: 8px;
+      background: var(--bg-terminal);
+      cursor: zoom-in;
+      overflow: hidden;
+    }
+
+    .diagram-trigger img {
+      display: block;
+      width: 100%;
+      height: auto;
+      transition: transform 0.22s ease;
+    }
+
+    .diagram-trigger:hover img { transform: scale(1.015); }
+
+    .diagram-caption {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+
+    .diagram-caption h3 {
+      margin: 0;
+      font-size: 1rem;
+      color: var(--text-bright);
+    }
+
+    .diagram-caption p {
+      margin: 0.2rem 0 0;
+      font-size: 0.86rem;
+      color: var(--text-muted);
+    }
+
+    /* Recipes */
+    .recipes-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .recipe-card {
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .recipe-card h3 {
+      margin: 0;
+      font-size: 1rem;
+      color: var(--neon-sky);
+    }
+
+    .recipe-card p {
+      margin: 0;
+      font-size: 0.88rem;
+      color: var(--text-muted);
+    }
+
+    /* Docs Hub */
+    .docs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 1rem;
+    }
+
+    .doc-card {
+      padding: 1.15rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      color: inherit;
+    }
+
+    .doc-card:hover {
+      border-color: var(--neon-cyan);
+      text-decoration: none;
+      transform: translateY(-2px);
+    }
+
+    .doc-tag {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--neon-emerald);
+    }
+
+    .doc-card h3 {
+      margin: 0;
+      font-size: 1rem;
+      color: var(--neon-cyan);
+    }
+
+    .doc-card p {
+      margin: 0;
+      font-size: 0.86rem;
+      color: var(--text-muted);
+    }
+
+    /* Lightbox Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1.25rem;
+      background: rgba(2, 5, 12, 0.92);
+      backdrop-filter: blur(8px);
+    }
+
+    .modal-backdrop.open { display: flex; }
+
+    .modal-panel {
+      width: min(1240px, 100%);
+      max-height: 92vh;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      padding: 1.15rem;
+      background: var(--bg-panel-solid);
+      border: 1px solid var(--border-bright);
+      border-radius: 12px;
+      box-shadow: 0 0 40px rgba(0, 229, 255, 0.2);
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .modal-title {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 1rem;
+      color: var(--neon-cyan);
+    }
+
+    .modal-close {
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+      border: 1px solid var(--border-bright);
+      background: rgba(0, 229, 255, 0.12);
+      color: var(--text-bright);
+      font-family: var(--font-mono);
+      cursor: pointer;
+    }
+
+    .modal-body {
+      overflow: auto;
+      border-radius: 8px;
+      background: var(--bg-terminal);
+      border: 1px solid var(--border-dim);
+      padding: 0.5rem;
+    }
+
+    .modal-body img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border-dim);
+      padding: 2rem 0 2.5rem;
+      margin-top: 1.5rem;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .empty-state {
+      display: none;
+      padding: 1.5rem;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .empty-state.visible { display: block; }
+
+    @media (max-width: 900px) {
+      .hero-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 600px) {
+      .cli-grid, .showcase-grid, .recipes-grid { grid-template-columns: 1fr; }
+      .hero-copy, .install-panel { padding: 1.2rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .pulse-dot { animation: none; }
+      .hud-card, .btn, .diagram-trigger img { transition: none; }
+      .cli-card:hover, .doc-card:hover, .btn:hover { transform: none; }
+      .diagram-trigger:hover img { transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand-mini" href="#top">
+        <img src="assets/icon.svg" alt="sysadmin-tools icon">
+        <span>sysadmin-tools // v0.5.0</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary navigation">
+        <a href="#cli-explorer">CLI Explorer</a>
+        <a href="#architecture-showcase">Architecture</a>
+        <a href="#quickstart-recipes">Quickstart &amp; systemd</a>
+        <a href="#docs-hub">Docs Hub</a>
+        <a href="user-guide/README.md">User&apos;s Guide</a>
+        <a href="https://github.com/bsommers/sysadmin-tools" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top" class="container">
+    <section class="hero" aria-label="Project overview">
+      <div class="hud-card hero-banner-wrap">
+        <img src="assets/logo.svg" alt="sysadmin-tools — Zero-dependency Linux telemetry, workload guard, and crash forensics suite">
+      </div>
+
+      <div class="hero-grid">
+        <div class="hud-card hero-copy">
+          <div class="eyebrow">
+            <span class="pulse-dot" aria-hidden="true"></span>
+            <span>Direct /proc &amp; /sys Telemetry</span>
+          </div>
+          <h1>Stall-proof Linux diagnostics when the system is pinned.</h1>
+          <p class="lead">
+            Seven standalone Python 3.10+ stdlib CLIs installed as self-contained copies on root NVMe.
+            Built to diagnose CPU spin loops, NVMe/disk I/O storms, memory/swap leaks, NIC drops,
+            systemd cgroup pressure, and post-crash reboots without spawning external utilities on the hot path.
+          </p>
+          <div class="stat-pills" aria-label="Suite metrics">
+            <span class="stat-pill">7 Standalone CLIs</span>
+            <span class="stat-pill emerald">0 Runtime Deps</span>
+            <span class="stat-pill">v0.5.0</span>
+            <span class="stat-pill emerald">166 Tests Passing</span>
+          </div>
+          <div class="cta-row">
+            <a class="btn" href="#cli-explorer">Explore 7 CLIs</a>
+            <a class="btn secondary" href="README.md">Docs Hub</a>
+            <a class="btn secondary" href="user-guide/README.md">User&apos;s Guide</a>
+            <a class="btn secondary" href="https://github.com/bsommers/sysadmin-tools" rel="noopener">GitHub Repo</a>
+          </div>
+        </div>
+
+        <aside class="hud-card install-panel" aria-label="Quick install">
+          <div>
+            <div class="panel-label">Quick Install (Root NVMe Copy)</div>
+            <p class="install-notes">
+              Clones the repository, runs the full local verification suite, and copies all 7 standalone binaries into <code>~/.local/bin</code>.
+            </p>
+          </div>
+          <div class="terminal-box">
+            <button class="copy-btn" type="button" data-copy="git clone https://github.com/bsommers/sysadmin-tools.git && cd sysadmin-tools && ./scripts/verify.sh && ./scripts/install.sh">Copy</button>
+            <pre>git clone https://github.com/bsommers/sysadmin-tools.git && cd sysadmin-tools && ./scripts/verify.sh && ./scripts/install.sh</pre>
+          </div>
+          <p class="install-notes">
+            Zero third-party packages. No symlinks to secondary disks, so diagnostics survive hung secondary mounts.
+          </p>
+        </aside>
+      </div>
+    </section>
+
+    <section id="cli-explorer" aria-labelledby="cli-explorer-title">
+      <div class="section-head">
+        <div>
+          <h2 id="cli-explorer-title">Interactive CLI Explorer</h2>
+          <p>Search by tool name, flag, kernel source, or operational scenario across all 7 standalone CLIs.</p>
+        </div>
+        <span id="cli-visible-count" class="cli-count" aria-live="polite">Showing 7 of 7 CLIs</span>
+      </div>
+
+      <div class="hud-card explorer-controls">
+        <div class="search-wrap">
+          <label class="sr-only" for="cli-search" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);">Filter CLIs</label>
+          <input id="cli-search" class="search-input" type="search" placeholder="Search CLI, flag (--diff-log, --exit-on-issue), or /proc source...">
+        </div>
+        <div class="filter-pills" role="group" aria-label="Filter CLIs by category">
+          <button class="filter-pill" type="button" data-filter="all" aria-pressed="true">All</button>
+          <button class="filter-pill" type="button" data-filter="Live Diagnostics" aria-pressed="false">Live Diagnostics</button>
+          <button class="filter-pill" type="button" data-filter="I/O &amp; Storage" aria-pressed="false">I/O &amp; Storage</button>
+          <button class="filter-pill" type="button" data-filter="Network &amp; Services" aria-pressed="false">Network &amp; Services</button>
+          <button class="filter-pill" type="button" data-filter="Post-Crash Forensics" aria-pressed="false">Post-Crash Forensics</button>
+        </div>
+      </div>
+
+      <div class="cli-grid" id="cli-grid">
+        <article class="hud-card cli-card" data-category="Live Diagnostics" data-search="sys-investigate cpu load i/o psi gpu nvme thermal pid tree diff-log diff-baseline diff-window append-log watch progress-check no-statvfs json markdown">
+          <div class="cli-head">
+            <img class="cli-icon" src="assets/icons/icon-investigate.svg" alt="sys-investigate icon">
+            <div class="cli-title-wrap">
+              <h3>sys-investigate</h3>
+              <span class="cli-cat">Live Diagnostics</span>
+            </div>
+          </div>
+          <p class="cli-purpose">
+            Diagnoses CPU/load spikes, storage I/O stalls, PSI pressure, NVMe thermals, GPU/cgroup contention, and per-PID trees directly from <code>/proc</code> and <code>/sys</code> — plus offline JSONL trend diffing.
+          </p>
+          <div class="cli-meta-block">
+            <strong>Key flags:</strong>
+            <div class="flag-list">
+              <span class="flag-chip">--interval SEC</span>
+              <span class="flag-chip">--watch [N]</span>
+              <span class="flag-chip">--progress-check</span>
+              <span class="flag-chip">--no-statvfs</span>
+              <span class="flag-chip">--diagnose-pid PID</span>
+              <span class="flag-chip">--append-log PATH</span>
+              <span class="flag-chip">--diff-log PATH</span>
+              <span class="flag-chip">--diff-baseline PATH</span>
+              <span class="flag-chip">--diff-window N</span>
+              <span class="flag-chip">--exit-on-issue</span>
+            </div>
+          </div>
+          <div class="cli-meta-block">
+            <strong>Exit codes:</strong> <code>0</code> healthy/report · <code>1</code> input/error · <code>3</code> issue/degraded trend (with <code>--exit-on-issue</code>)
+          </div>
+          <div class="terminal-box cli-cmd">
+            <button class="copy-btn" type="button" data-copy="sys-investigate --interval 2 --progress-check --no-statvfs">Copy</button>
+            <pre>sys-investigate --interval 2 --progress-check --no-statvfs</pre>
+          </div>
+        </article>
+
+        <article class="hud-card cli-card" data-category="I/O &amp; Storage" data-search="sys-io-guard flock serialize cargo build jobs nice block device proc mounts lock-key timeout status dry-run json">
+          <div class="cli-head">
+            <img class="cli-icon" src="assets/icons/icon-io-guard.svg" alt="sys-io-guard icon">
+            <div class="cli-title-wrap">
+              <h3>sys-io-guard</h3>
+              <span class="cli-cat">I/O &amp; Storage</span>
+            </div>
+          </div>
+          <p class="cli-purpose">
+            Serializes heavy builds and tests per backing physical disk via advisory <code>flock</code> on tmpfs/root, capping <code>CARGO_BUILD_JOBS</code> and child CPU niceness to prevent storage storms.
+          </p>
+          <div class="cli-meta-block">
+            <strong>Key flags:</strong>
+            <div class="flag-list">
+              <span class="flag-chip">--path DIR</span>
+              <span class="flag-chip">--lock-key NAME</span>
+              <span class="flag-chip">--timeout SEC</span>
+              <span class="flag-chip">--cargo-jobs N</span>
+              <span class="flag-chip">--nice N</span>
+              <span class="flag-chip">--status</span>
+              <span class="flag-chip">--dry-run</span>
+              <span class="flag-chip">--json</span>
+            </div>
+          </div>
+          <div class="cli-meta-block">
+            <strong>Exit codes:</strong> child exit code (<code>0</code> ok) · <code>1</code> error · <code>2</code> usage · <code>4</code> lock busy/timeout · <code>128+sig</code> signal
+          </div>
+          <div class="terminal-box cli-cmd">
+            <button class="copy-btn" type="button" data-copy="sys-io-guard --timeout 300 --cargo-jobs 4 --nice 10 -- cargo test">Copy</button>
+            <pre>sys-io-guard --timeout 300 --cargo-jobs 4 --nice 10 -- cargo test</pre>
+          </div>
+        </article>
+
+        <article class="hud-card cli-card" data-category="Live Diagnostics" data-search="sys-mem-watch rss swap growth reclaim kswapd psi oom score memory meminfo vmstat watch append-log exit-on-issue">
+          <div class="cli-head">
+            <img class="cli-icon" src="assets/icons/icon-mem-watch.svg" alt="sys-mem-watch icon">
+            <div class="cli-title-wrap">
+              <h3>sys-mem-watch</h3>
+              <span class="cli-cat">Live Diagnostics</span>
+            </div>
+          </div>
+          <p class="cli-purpose">
+            Measures per-process RSS/swap growth rates, direct vs <code>kswapd</code> page reclaim, memory PSI stalls, and OOM-kill risk directly from <code>/proc/meminfo</code>, <code>/proc/vmstat</code>, and <code>/proc/&lt;pid&gt;/*</code>.
+          </p>
+          <div class="cli-meta-block">
+            <strong>Key flags:</strong>
+            <div class="flag-list">
+              <span class="flag-chip">--interval SEC</span>
+              <span class="flag-chip">--top N</span>
+              <span class="flag-chip">--watch [N]</span>
+              <span class="flag-chip">--append-log PATH</span>
+              <span class="flag-chip">--json</span>
+              <span class="flag-chip">--markdown</span>
+              <span class="flag-chip">--exit-on-issue</span>
+            </div>
+          </div>
+          <div class="cli-meta-block">
+            <strong>Exit codes:</strong> <code>0</code> healthy/report · <code>1</code> input/error · <code>3</code> non-healthy verdict (with <code>--exit-on-issue</code>)
+          </div>
+          <div class="terminal-box cli-cmd">
+            <button class="copy-btn" type="button" data-copy="sys-mem-watch --interval 2 --top 10 --exit-on-issue">Copy</button>
+            <pre>sys-mem-watch --interval 2 --top 10 --exit-on-issue</pre>
+          </div>
+        </article>
+
+        <article class="hud-card cli-card" data-category="I/O &amp; Storage" data-search="sys-disk-hogs scandir disk usage cache target node_modules git hardlinks one-file-system cross-mounts no-statvfs">
+          <div class="cli-head">
+            <img class="cli-icon" src="assets/icons/icon-disk-hogs.svg" alt="sys-disk-hogs icon">
+            <div class="cli-title-wrap">
+              <h3>sys-disk-hogs</h3>
+              <span class="cli-cat">I/O &amp; Storage</span>
+            </div>
+          </div>
+          <p class="cli-purpose">
+            Iterative <code>os.scandir()</code> workspace and cache analyzer (zero <code>du</code>/<code>find</code> subprocesses) that deduplicates hardlinks, isolates reclaimable build caches from <code>.git</code>, and skips hung FUSE/network <code>statvfs()</code>.
+          </p>
+          <div class="cli-meta-block">
+            <strong>Key flags:</strong>
+            <div class="flag-list">
+              <span class="flag-chip">--top N</span>
+              <span class="flag-chip">--depth N</span>
+              <span class="flag-chip">--min-mib N</span>
+              <span class="flag-chip">--min-file-mib N</span>
+              <span class="flag-chip">--one-file-system</span>
+              <span class="flag-chip">--cross-mounts</span>
+              <span class="flag-chip">--no-statvfs</span>
+              <span class="flag-chip">--json</span>
+            </div>
+          </div>
+          <div class="cli-meta-block">
+            <strong>Exit codes:</strong> <code>0</code> analysis succeeded · <code>1</code> invalid arguments or unreadable target
+          </div>
+          <div class="terminal-box cli-cmd">
+            <button class="copy-btn" type="button" data-copy="sys-disk-hogs . --top 15 --depth 2 --no-statvfs">Copy</button>
+            <pre>sys-disk-hogs . --top 15 --depth 2 --no-statvfs</pre>
+          </div>
+        </article>
+
+        <article class="hud-card cli-card" data-category="Post-Crash Forensics" data-search="sys-crash-triage boot reboot panic mce gpu hang pstore kdump amd fch nul gaps journalctl no-journalctl show-steps">
+          <div class="cli-head">
+            <img class="cli-icon" src="assets/icons/icon-crash-triage.svg" alt="sys-crash-triage icon">
+            <div class="cli-title-wrap">
+              <h3>sys-crash-triage</h3>
+              <span class="cli-cat">Post-Crash Forensics</span>
+            </div>
+          </div>
+          <p class="cli-purpose">
+            Reconstructs unexpected reboots and hard resets via boot timelines, AMD FCH reset registers, NUL-byte log gaps, kernel panic/MCE/GPU signatures, and <code>pstore</code>/<code>kdump</code> readiness.
+          </p>
+          <div class="cli-meta-block">
+            <strong>Key flags:</strong>
+            <div class="flag-list">
+              <span class="flag-chip">--boot N</span>
+              <span class="flag-chip">--boots-history N</span>
+              <span class="flag-chip">--tail-lines N</span>
+              <span class="flag-chip">--no-journalctl</span>
+              <span class="flag-chip">--journal-timeout SEC</span>
+              <span class="flag-chip">--show-steps</span>
+              <span class="flag-chip">--append-log PATH</span>
+              <span class="flag-chip">--exit-on-issue</span>
+            </div>
+          </div>
+          <div class="cli-meta-block">
+            <strong>Exit codes:</strong> <code>0</code> clean/report · <code>1</code> input/error · <code>3</code> unclean crash/fatal fault (with <code>--exit-on-issue</code>)
+          </div>
+          <div class="terminal-box cli-cmd">
+            <button class="copy-btn" type="button" data-copy="sys-crash-triage --boot -1 --no-journalctl --show-steps">Copy</button>
+            <pre>sys-crash-triage --boot -1 --no-journalctl --show-steps</pre>
+          </div>
+        </article>
+
+        <article class="hud-card cli-card" data-category="Network &amp; Services" data-search="sys-net-watch nic rx tx drops errors tcp retransmits socket leaks time_wait close_wait softnet_stat proc net iface samples">
+          <div class="cli-head">
+            <img class="cli-icon" src="assets/icons/icon-net-watch.svg" alt="sys-net-watch icon">
+            <div class="cli-title-wrap">
+              <h3>sys-net-watch</h3>
+              <span class="cli-cat">Network &amp; Services</span>
+            </div>
+          </div>
+          <p class="cli-purpose">
+            Tracks NIC RX/TX drops &amp; FIFO/carrier errors, TCP retransmit ratios, socket state leaks (<code>CLOSE_WAIT</code>/<code>TIME_WAIT</code>), and per-CPU <code>softnet_stat</code> backlogs from <code>/proc/net/*</code>.
+          </p>
+          <div class="cli-meta-block">
+            <strong>Key flags:</strong>
+            <div class="flag-list">
+              <span class="flag-chip">--interval SEC</span>
+              <span class="flag-chip">--samples N</span>
+              <span class="flag-chip">--iface LIST</span>
+              <span class="flag-chip">--top N</span>
+              <span class="flag-chip">--json</span>
+              <span class="flag-chip">--markdown</span>
+              <span class="flag-chip">--exit-on-issue</span>
+              <span class="flag-chip">--version</span>
+            </div>
+          </div>
+          <div class="cli-meta-block">
+            <strong>Exit codes:</strong> <code>0</code> healthy/report · <code>1</code> input/error · <code>3</code> non-healthy verdict (with <code>--exit-on-issue</code>)
+          </div>
+          <div class="terminal-box cli-cmd">
+            <button class="copy-btn" type="button" data-copy="sys-net-watch --interval 1 --samples 2 --top 8">Copy</button>
+            <pre>sys-net-watch --interval 1 --samples 2 --top 8</pre>
+          </div>
+        </article>
+
+        <article class="hud-card cli-card" data-category="Network &amp; Services" data-search="sys-systemd-watch systemd cgroup v2 cpu memory io psi throttling crash loop journal burst unit cgroup-root">
+          <div class="cli-head">
+            <img class="cli-icon" src="assets/icons/icon-systemd-watch.svg" alt="sys-systemd-watch icon">
+            <div class="cli-title-wrap">
+              <h3>sys-systemd-watch</h3>
+              <span class="cli-cat">Network &amp; Services</span>
+            </div>
+          </div>
+          <p class="cli-purpose">
+            Monitors systemd cgroup v2 CPU/memory/I/O PSI throttling, rapid PID churn / crash loops, and journal file burst activity directly from <code>/sys/fs/cgroup</code> and <code>/proc</code> (zero <code>systemctl</code> calls).
+          </p>
+          <div class="cli-meta-block">
+            <strong>Key flags:</strong>
+            <div class="flag-list">
+              <span class="flag-chip">--interval SEC</span>
+              <span class="flag-chip">--samples N</span>
+              <span class="flag-chip">--top N</span>
+              <span class="flag-chip">--unit PATTERN</span>
+              <span class="flag-chip">--cgroup-root PATH</span>
+              <span class="flag-chip">--json</span>
+              <span class="flag-chip">--markdown</span>
+              <span class="flag-chip">--exit-on-issue</span>
+            </div>
+          </div>
+          <div class="cli-meta-block">
+            <strong>Exit codes:</strong> <code>0</code> healthy/report · <code>1</code> input/error · <code>3</code> non-healthy verdict (with <code>--exit-on-issue</code>)
+          </div>
+          <div class="terminal-box cli-cmd">
+            <button class="copy-btn" type="button" data-copy="sys-systemd-watch --interval 1 --samples 2 --top 10">Copy</button>
+            <pre>sys-systemd-watch --interval 1 --samples 2 --top 10</pre>
+          </div>
+        </article>
+      </div>
+
+      <div id="cli-empty" class="hud-card empty-state">
+        No CLI matches your current filter. Clear the search box or switch back to <strong>All</strong>.
+      </div>
+    </section>
+
+    <section id="architecture-showcase" aria-labelledby="arch-title">
+      <div class="section-head">
+        <div>
+          <h2 id="arch-title">Visual Architecture &amp; Workflow Showcase</h2>
+          <p>Click either schematic to inspect full resolution in the HUD lightbox (press <code>Esc</code> to close).</p>
+        </div>
+      </div>
+
+      <div class="showcase-grid">
+        <article class="hud-card diagram-card">
+          <button class="diagram-trigger" type="button" data-modal-src="assets/examples/architecture-overview.svg" data-modal-title="sysadmin-tools — Kernel Data Plane &amp; Root-NVMe Topology">
+            <img src="assets/examples/architecture-overview.svg" alt="sysadmin-tools architecture overview diagram showing direct /proc and /sys reads across all 7 CLIs">
+          </button>
+          <div class="diagram-caption">
+            <div>
+              <h3>Architecture Overview</h3>
+              <p>Direct <code>/proc</code>, <code>/sys</code>, and <code>/sys/fs/cgroup</code> data plane with root-NVMe binary isolation.</p>
+            </div>
+            <button class="btn secondary" type="button" data-modal-src="assets/examples/architecture-overview.svg" data-modal-title="sysadmin-tools — Kernel Data Plane &amp; Root-NVMe Topology">Zoom</button>
+          </div>
+        </article>
+
+        <article class="hud-card diagram-card">
+          <button class="diagram-trigger" type="button" data-modal-src="assets/examples/incident-triage-workflow.svg" data-modal-title="sysadmin-tools — 4-Stage Incident Triage &amp; Guard Workflow">
+            <img src="assets/examples/incident-triage-workflow.svg" alt="4-stage incident triage workflow diagram from stall detection to guard serialization and crash forensics">
+          </button>
+          <div class="diagram-caption">
+            <div>
+              <h3>Incident Triage Workflow</h3>
+              <p>From live stall detection and trend diffing to disk-locked builds and post-crash forensics.</p>
+            </div>
+            <button class="btn secondary" type="button" data-modal-src="assets/examples/incident-triage-workflow.svg" data-modal-title="sysadmin-tools — 4-Stage Incident Triage &amp; Guard Workflow">Zoom</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="quickstart-recipes" aria-labelledby="recipes-title">
+      <div class="section-head">
+        <div>
+          <h2 id="recipes-title">Runnable Quickstart &amp; <code>systemd</code> Timer Recipes</h2>
+          <p>Copy-ready commands for verification, live stall triage, JSONL trend diffing, and background sampling.</p>
+        </div>
+      </div>
+
+      <div class="recipes-grid">
+        <article class="hud-card recipe-card">
+          <h3>1. Verify &amp; Install Standalone Copies</h3>
+          <p>Run the syntax, unit, and smoke checks, then copy all 7 self-contained tools into <code>~/.local/bin</code>.</p>
+          <div class="terminal-box">
+            <button class="copy-btn" type="button" data-copy="./scripts/verify.sh && ./scripts/install.sh">Copy</button>
+            <pre>./scripts/verify.sh && ./scripts/install.sh</pre>
+          </div>
+        </article>
+
+        <article class="hud-card recipe-card">
+          <h3>2. Live Stall Triage &amp; JSONL Trend Diff</h3>
+          <p>Capture stall-safe telemetry with <code>--no-statvfs</code>, append JSONL snapshots, and diff recent vs baseline windows.</p>
+          <div class="terminal-box">
+            <button class="copy-btn" type="button" data-copy="sys-investigate --interval 2 --progress-check --no-statvfs --append-log ~/.local/state/sysadmin-tools/investigate.jsonl
+sys-investigate --diff-log ~/.local/state/sysadmin-tools/investigate.jsonl --diff-window 5">Copy</button>
+            <pre>sys-investigate --interval 2 --progress-check --no-statvfs --append-log ~/.local/state/sysadmin-tools/investigate.jsonl
+sys-investigate --diff-log ~/.local/state/sysadmin-tools/investigate.jsonl --diff-window 5</pre>
+          </div>
+        </article>
+
+        <article class="hud-card recipe-card">
+          <h3>3. Network &amp; systemd Service Pressure</h3>
+          <p>Check NIC drops, TCP retransmits, socket leaks, and cgroup v2 unit throttling without calling external tools.</p>
+          <div class="terminal-box">
+            <button class="copy-btn" type="button" data-copy="sys-net-watch --interval 1 --samples 2 --exit-on-issue
+sys-systemd-watch --interval 1 --samples 2 --top 10 --exit-on-issue">Copy</button>
+            <pre>sys-net-watch --interval 1 --samples 2 --exit-on-issue
+sys-systemd-watch --interval 1 --samples 2 --top 10 --exit-on-issue</pre>
+          </div>
+        </article>
+
+        <article class="hud-card recipe-card">
+          <h3>4. Serialize Heavy Disk Builds with <code>sys-io-guard</code></h3>
+          <p>Lock per backing block device from <code>/proc/mounts</code>, cap Cargo jobs, and lower child CPU priority.</p>
+          <div class="terminal-box">
+            <button class="copy-btn" type="button" data-copy="sys-io-guard --path . --timeout 300 --cargo-jobs 4 --nice 10 -- bash scripts/verify.sh">Copy</button>
+            <pre>sys-io-guard --path . --timeout 300 --cargo-jobs 4 --nice 10 -- bash scripts/verify.sh</pre>
+          </div>
+        </article>
+
+        <article class="hud-card recipe-card">
+          <h3>5. Enable User <code>systemd</code> 5-Minute Sampler</h3>
+          <p>Install the low-overhead oneshot unit from <code>packaging/systemd/</code> (<code>Nice=10</code>, <code>MemoryMax=128M</code>, <code>--no-statvfs</code>).</p>
+          <div class="terminal-box">
+            <button class="copy-btn" type="button" data-copy="mkdir -p ~/.config/systemd/user
+cp packaging/systemd/sys-investigate-sampler.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now sys-investigate-sampler.timer">Copy</button>
+            <pre>mkdir -p ~/.config/systemd/user
+cp packaging/systemd/sys-investigate-sampler.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now sys-investigate-sampler.timer</pre>
+          </div>
+        </article>
+
+        <article class="hud-card recipe-card">
+          <h3>6. Post-Crash &amp; Memory/Disk Audit</h3>
+          <p>Inspect unexpected reboots, OOM pressure, and reclaimable workspace caches with zero hung-mount blocking.</p>
+          <div class="terminal-box">
+            <button class="copy-btn" type="button" data-copy="sys-crash-triage --boot -1 --no-journalctl --show-steps
+sys-mem-watch --interval 2 --top 10
+sys-disk-hogs . --top 15 --no-statvfs">Copy</button>
+            <pre>sys-crash-triage --boot -1 --no-journalctl --show-steps
+sys-mem-watch --interval 2 --top 10
+sys-disk-hogs . --top 15 --no-statvfs</pre>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="docs-hub" aria-labelledby="docs-title">
+      <div class="section-head">
+        <div>
+          <h2 id="docs-title">Documentation Hub</h2>
+          <p>Architecture contracts, CLI references, operator runbooks, diagrams, and release history.</p>
+        </div>
+      </div>
+
+      <div class="docs-grid">
+        <a class="hud-card doc-card" href="README.md">
+          <span class="doc-tag">Index</span>
+          <h3>Docs Hub</h3>
+          <p>Master documentation index and persona reading order.</p>
+        </a>
+        <a class="hud-card doc-card" href="user-guide/README.md">
+          <span class="doc-tag">Walkthroughs</span>
+          <h3>User&apos;s Guide</h3>
+          <p>Task-oriented chapters covering setup, live triage, I/O guards, memory/disk, and crash forensics.</p>
+        </a>
+        <a class="hud-card doc-card" href="purpose.md">
+          <span class="doc-tag">Principles</span>
+          <h3>Purpose &amp; Threat Model</h3>
+          <p>Origin I/O-storm incident telemetry, non-negotiable engineering tenets, and trust boundaries.</p>
+        </a>
+        <a class="hud-card doc-card" href="architecture.md">
+          <span class="doc-tag">Internals</span>
+          <h3>Architecture &amp; Schemas</h3>
+          <p>Two-snapshot engines, deterministic verdict classifiers, and JSON/JSONL schema contracts.</p>
+        </a>
+        <a class="hud-card doc-card" href="running.md">
+          <span class="doc-tag">Reference</span>
+          <h3>CLI &amp; Flag Reference</h3>
+          <p>Complete flag tables, environment variables, output formats, and exit codes across all 7 CLIs.</p>
+        </a>
+        <a class="hud-card doc-card" href="how-to.md">
+          <span class="doc-tag">Runbooks</span>
+          <h3>How-To Recipes</h3>
+          <p>Copy-pasteable incident response playbooks, automation patterns, and troubleshooting matrix.</p>
+        </a>
+        <a class="hud-card doc-card" href="diagrams/README.md">
+          <span class="doc-tag">Schematics</span>
+          <h3>Mermaid &amp; Draw.io Diagrams</h3>
+          <p>Architecture, execution flow, storage isolation, and verdict state-machine sources.</p>
+        </a>
+        <a class="hud-card doc-card" href="BUILDSPEC.md">
+          <span class="doc-tag">Contract</span>
+          <h3>As-Built Buildspec</h3>
+          <p>Module map, invariants, verification targets, and roadmap tracking.</p>
+        </a>
+        <a class="hud-card doc-card" href="NOTES.md">
+          <span class="doc-tag">Field Log</span>
+          <h3>Engineering Notes</h3>
+          <p>Kernel/procfs pitfalls and live-testing discoveries across NVMe, cgroups, and AMD FCH.</p>
+        </a>
+        <a class="hud-card doc-card" href="https://github.com/bsommers/sysadmin-tools/blob/main/packaging/systemd/README.md" rel="noopener">
+          <span class="doc-tag">Automation</span>
+          <h3>systemd Sampler Templates</h3>
+          <p>User-level timer and service templates for periodic <code>sys-investigate</code> JSONL sampling.</p>
+        </a>
+        <a class="hud-card doc-card" href="https://github.com/bsommers/sysadmin-tools/blob/main/CHANGELOG.md" rel="noopener">
+          <span class="doc-tag">Releases</span>
+          <h3>CHANGELOG</h3>
+          <p>Version-by-version release notes from initial suite through v0.5.0.</p>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>sysadmin-tools v0.5.0 · Python 3.10+ stdlib only · Zero external runtime dependencies</span>
+      <span>
+        <a href="https://github.com/bsommers/sysadmin-tools" rel="noopener">GitHub</a> ·
+        <a href="README.md">Docs</a> ·
+        <a href="https://github.com/bsommers/sysadmin-tools/blob/main/CHANGELOG.md" rel="noopener">Changelog</a>
+      </span>
+    </div>
+  </footer>
+
+  <div class="modal-backdrop" id="diagram-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modal-title">Diagram Preview</h3>
+        <button class="modal-close" type="button" id="modal-close-btn">Close [Esc]</button>
+      </div>
+      <div class="modal-body">
+        <img id="modal-img" src="assets/examples/architecture-overview.svg" alt="Expanded architecture diagram">
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const searchInput = document.getElementById("cli-search");
+      const filterButtons = Array.from(document.querySelectorAll(".filter-pill"));
+      const cards = Array.from(document.querySelectorAll(".cli-card"));
+      const countEl = document.getElementById("cli-visible-count");
+      const emptyEl = document.getElementById("cli-empty");
+      let activeCategory = "all";
+
+      function applyFilters() {
+        const q = searchInput.value.trim().toLowerCase();
+        let shown = 0;
+
+        cards.forEach((card) => {
+          const cat = card.getAttribute("data-category") || "";
+          const hay = (card.textContent + " " + (card.getAttribute("data-search") || "")).toLowerCase();
+          const catOk = activeCategory === "all" || cat === activeCategory;
+          const qOk = !q || hay.includes(q);
+          const visible = catOk && qOk;
+          card.classList.toggle("hidden", !visible);
+          if (visible) shown += 1;
+        });
+
+        countEl.textContent = "Showing " + shown + " of " + cards.length + " CLIs";
+        emptyEl.classList.toggle("visible", shown === 0);
+      }
+
+      filterButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          activeCategory = btn.getAttribute("data-filter") || "all";
+          filterButtons.forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+          applyFilters();
+        });
+      });
+
+      searchInput.addEventListener("input", applyFilters);
+
+      document.querySelectorAll("[data-copy]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const text = btn.getAttribute("data-copy") || "";
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              await navigator.clipboard.writeText(text);
+            } else {
+              const ta = document.createElement("textarea");
+              ta.value = text;
+              ta.style.position = "fixed";
+              ta.style.opacity = "0";
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand("copy");
+              document.body.removeChild(ta);
+            }
+            const prev = btn.textContent;
+            btn.textContent = "Copied";
+            btn.classList.add("copied");
+            setTimeout(() => {
+              btn.textContent = prev;
+              btn.classList.remove("copied");
+            }, 1500);
+          } catch (_err) {
+            btn.textContent = "Select manually";
+          }
+        });
+      });
+
+      const modal = document.getElementById("diagram-modal");
+      const modalImg = document.getElementById("modal-img");
+      const modalTitle = document.getElementById("modal-title");
+      const modalClose = document.getElementById("modal-close-btn");
+      let lastTrigger = null;
+
+      function closeModal() {
+        modal.classList.remove("open");
+        if (lastTrigger) {
+          lastTrigger.focus();
+          lastTrigger = null;
+        }
+      }
+
+      document.querySelectorAll("[data-modal-src]").forEach((trigger) => {
+        trigger.addEventListener("click", () => {
+          lastTrigger = trigger;
+          modalImg.src = trigger.getAttribute("data-modal-src") || "";
+          modalTitle.textContent = trigger.getAttribute("data-modal-title") || "Diagram Preview";
+          modal.classList.add("open");
+          modalClose.focus();
+        });
+      });
+
+      modalClose.addEventListener("click", closeModal);
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) closeModal();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && modal.classList.contains("open")) {
+          closeModal();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

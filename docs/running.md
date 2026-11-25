@@ -20,7 +20,7 @@ Installing direct copies into `~/.local/bin` (on the root OS disk) ensures every
 # Preview actions without modifying files
 ./scripts/install.sh --dry-run
 
-# Install all 5 standalone CLIs into ~/.local/bin (mode 0755)
+# Install all 7 standalone CLIs into ~/.local/bin (mode 0755)
 ./scripts/install.sh
 
 # Install to a custom prefix (e.g., /usr/local/bin)
@@ -33,6 +33,8 @@ sudo ./scripts/install.sh --prefix /usr/local/bin
 - `~/.local/bin/sys-mem-watch`
 - `~/.local/bin/sys-disk-hogs`
 - `~/.local/bin/sys-crash-triage`
+- `~/.local/bin/sys-net-watch`
+- `~/.local/bin/sys-systemd-watch`
 
 Ensure `~/.local/bin` is on your `PATH`.
 
@@ -53,23 +55,29 @@ Diagnoses what is driving CPU/load and whether the workload is productive, thras
 ```text
 sys-investigate [--interval INTERVAL] [--top TOP] [--json | --markdown]
                 [--watch [COUNT]] [--progress-check] [--no-statvfs]
-                [--append-log PATH] [--diagnose-pid PID] [--exit-on-issue]
-                [--verbose]
+                [--append-log PATH] [--diff-log PATH]
+                [--diff-baseline PATH] [--diff-window N]
+                [--diagnose-pid PID] [--exit-on-issue] [--verbose]
+                [--version]
 ```
 
 | Flag | Value / Range | Default | Description |
 | --- | --- | --- | --- |
 | `--interval INTERVAL` | `0.2..60.0` (sec) | `2.0` (or `SYS_INVESTIGATE_INTERVAL`) | Two-snapshot sampling window duration |
-| `--top TOP` | `1..100` | `10` (or `SYS_INVESTIGATE_TOP`) | Maximum rows per section (`top_cpu`, `top_io`, `d_state_top`, `overlapping_workloads`) |
+| `--top TOP` | `1..100` | `10` (or `SYS_INVESTIGATE_TOP`) | Maximum rows per section (`top_cpu`, `top_io`, `d_state_top`, `overlapping_workloads`, `recurring_offenders`) |
 | `--json` | flag | off | Emit deterministic JSON (`sort_keys=True`) to `stdout` (mutually exclusive with `--markdown`) |
 | `--markdown` | flag | off | Emit Markdown report to `stdout` (mutually exclusive with `--json`) |
 | `--watch [COUNT]` | optional int (`>=0`) | off | Repeat investigation `COUNT` times (`0` or omitted = run until `Ctrl-C`) |
 | `--progress-check` | flag | off | Run two consecutive sampling windows to confirm whether stalls are progressing or wedged |
 | `--no-statvfs` | flag | off | Skip `os.statvfs()` mount fill checks for extra protection when mounts are hung |
 | `--append-log PATH` | file path | off | Append each report as a compact JSONL line to `PATH` (creates parent dirs) |
+| `--diff-log PATH` | file path | off | Summarize trends and diff snapshots in an `--append-log` JSONL file (offline mode) |
+| `--diff-baseline PATH` | file path | off | Baseline JSONL log file to compare against `--diff-log PATH` |
+| `--diff-window N` | int `>= 1` | off | Compare the last `N` snapshots against the prior `N` snapshots (or last `N` of `--diff-baseline`) |
 | `--diagnose-pid PID` | positive int | off | Run targeted two-snapshot diagnosis of `PID` and its descendant process subtree |
-| `--exit-on-issue` | flag | off | Exit with code `3` when verdict `is_issue` is `True` (thrashing, wedged, spin loop, or critical NVMe alert) |
+| `--exit-on-issue` | flag | off | Exit with code `3` when verdict `is_issue` is `True` (or log trend degrades in `--diff-log` mode) |
 | `--verbose` | flag | off | Print effective configuration to `stderr` |
+| `--version` | flag | off | Print `sys-investigate 0.5.0` and exit |
 
 ---
 
@@ -175,6 +183,54 @@ sys-crash-triage [--boot BOOT] [--boots-history BOOTS_HISTORY]
 | `--exit-on-issue` | flag | off | Exit with code `3` when an unclean crash/reset or fatal fault is detected |
 | `--verbose` | flag | off | Print diagnostic warnings to `stderr` |
 
+---
+
+### 3.6 `sys-net-watch`
+
+Diagnoses NIC errors/drops, TCP retransmits, socket leaks (`CLOSE_WAIT`, `TIME_WAIT`, SYN backlog), and per-CPU softnet pressure via pure `/proc/net/*` snapshots.
+
+```text
+sys-net-watch [--interval INTERVAL] [--samples N] [--iface IFACE] [--top TOP]
+              [--json | --markdown] [--exit-on-issue] [--verbose] [--version]
+```
+
+| Flag | Value / Range | Default | Description |
+| --- | --- | --- | --- |
+| `--interval INTERVAL` | `0.1..60.0` (sec) | `1.0` (or `SYS_NET_WATCH_INTERVAL`) | Sampling interval between snapshots |
+| `--samples N` | int `>= 1` | `2` | Number of `/proc/net/*` snapshots (`2` = one delta window) |
+| `--iface IFACE` | string (repeatable / comma-separated) | all interfaces | Filter `/proc/net/dev` interfaces (e.g. `--iface eno1,lo`) |
+| `--top TOP` | `1..100` | `8` (or `SYS_NET_WATCH_TOP`) | Maximum interface and softnet CPU rows to display |
+| `--json` | flag | off | Emit deterministic JSON (`sort_keys=True`) to `stdout` (mutually exclusive with `--markdown`) |
+| `--markdown` | flag | off | Emit Markdown report to `stdout` (mutually exclusive with `--json`) |
+| `--exit-on-issue` | flag | off | Exit with code `3` when verdict status is not `HEALTHY` |
+| `--verbose` | flag | off | Print effective configuration to `stderr` |
+| `--version` | flag | off | Print `sys-net-watch 0.5.0` and exit |
+
+---
+
+### 3.7 `sys-systemd-watch`
+
+Monitors systemd cgroup v2 resource pressure (memory/OOM, CFS CPU throttling, I/O PSI), service crash-loop PID churn, and journal growth bursts with zero `systemctl` or `journalctl` subprocesses.
+
+```text
+sys-systemd-watch [--interval INTERVAL] [--samples N] [--top TOP]
+                  [--unit PATTERN] [--cgroup-root PATH]
+                  [--json | --markdown] [--exit-on-issue] [--verbose] [--version]
+```
+
+| Flag | Value / Range | Default | Description |
+| --- | --- | --- | --- |
+| `--interval INTERVAL` | `0.05..60.0` (sec) | `1.0` (or `SYS_SYSTEMD_WATCH_INTERVAL`) | Seconds between cgroup snapshots |
+| `--samples N` | `1..60` | `2` | Number of cgroup snapshots to collect |
+| `--top TOP` | `1..100` | `10` (or `SYS_SYSTEMD_WATCH_TOP`) | Maximum rows per section (`top_memory`, `top_cpu`, `top_io`, `problem_units`, `top_slices`) |
+| `--unit PATTERN` | string | all units | Optional substring or glob filter for unit name or cgroup path (e.g. `docker`, `'*.service'`) |
+| `--cgroup-root PATH` | directory path | `/sys/fs/cgroup` | Cgroup v2 root directory |
+| `--json` | flag | off | Emit deterministic JSON (`sort_keys=True`) to `stdout` (mutually exclusive with `--markdown`) |
+| `--markdown` | flag | off | Emit Markdown report to `stdout` (mutually exclusive with `--json`) |
+| `--exit-on-issue` | flag | off | Exit with code `3` when verdict status is not `HEALTHY` |
+| `--verbose` | flag | off | Print effective configuration to `stderr` |
+| `--version` | flag | off | Print `sys-systemd-watch 0.5.0` and exit |
+
 ## 4. Environment Variables
 
 | Variable | Read / Set By | Purpose & Precedence |
@@ -188,23 +244,27 @@ sys-crash-triage [--boot BOOT] [--boots-history BOOTS_HISTORY]
 | `CARGO_BUILD_JOBS` | `sys-io-guard` (**exported to child**) | Automatically exported to guarded child processes when `--cargo-jobs > 0` |
 | `SYS_MEM_WATCH_INTERVAL` | `sys-mem-watch` (read) | Default `--interval` (`0.2..60.0`); CLI `--interval` takes precedence |
 | `SYS_MEM_WATCH_TOP` | `sys-mem-watch` (read) | Default `--top` (`1..100`); CLI `--top` takes precedence |
+| `SYS_NET_WATCH_INTERVAL` | `sys-net-watch` (read) | Default `--interval` (`0.1..60.0`); CLI `--interval` takes precedence |
+| `SYS_NET_WATCH_TOP` | `sys-net-watch` (read) | Default `--top` (`1..100`); CLI `--top` takes precedence |
+| `SYS_SYSTEMD_WATCH_INTERVAL` | `sys-systemd-watch` (read) | Default `--interval` (`0.05..60.0`); CLI `--interval` takes precedence |
+| `SYS_SYSTEMD_WATCH_TOP` | `sys-systemd-watch` (read) | Default `--top` (`1..100`); CLI `--top` takes precedence |
 
 ## 5. Output Formats & Stream Discipline
 
 - **Stream separation:** Report data is always written to `stdout`. Configuration summaries (`--verbose`), warnings, and single-line `error: ...` diagnostics are always written to `stderr`, keeping pipes like `sys-investigate --json | jq '.verdict'` clean.
 - **Plain text (default):** Compact, aligned terminal report tailored for rapid visual scanning during incidents.
-- **Markdown (`--markdown`):** Structured headings and bullet/table output ready to paste directly into incident tickets, PRs, or post-mortems (`sys-investigate`, `sys-mem-watch`, `sys-disk-hogs`, `sys-crash-triage`).
+- **Markdown (`--markdown`):** Structured headings and bullet/table output ready to paste directly into incident tickets, PRs, or post-mortems (`sys-investigate`, `sys-mem-watch`, `sys-disk-hogs`, `sys-crash-triage`, `sys-net-watch`, `sys-systemd-watch`).
 - **Deterministic JSON (`--json`):** Pretty-printed with `indent=2, sort_keys=True` for reliable diffing, snapshot testing, and `jq` pipelines.
-- **JSONL telemetry (`--append-log PATH`):** Appends one JSON object per line to `PATH` (creating parent directories as needed) while still emitting the selected `stdout` format (`sys-investigate`, `sys-mem-watch`, `sys-crash-triage`).
+- **JSONL telemetry (`--append-log PATH` & `--diff-log PATH`):** Appends one JSON object per line to `PATH` (creating parent directories as needed) while still emitting the selected `stdout` format (`sys-investigate`, `sys-mem-watch`, `sys-crash-triage`), and compares/diffs historical JSONL snapshots offline via `sys-investigate --diff-log PATH`.
 
 ## 6. Unified Exit Code Reference
 
 | Exit Code | Meaning | Applies To |
 | --- | --- | --- |
-| `0` | Success (or healthy / no issue detected; also `--status` and `--dry-run` on `sys-io-guard`) | All 5 CLIs |
-| `1` | Validation error (out-of-range flag, invalid env var, missing PID/path, `--json` without `--status`/`--dry-run` on `sys-io-guard`) or OS/runtime error | All 5 CLIs |
-| `2` | Command-line syntax / `argparse` error (unknown flag, missing required value, mutually exclusive flags) | All 5 CLIs |
-| `3` | Issue detected while `--exit-on-issue` is enabled (`verdict.is_issue == true`) | `sys-investigate`, `sys-mem-watch`, `sys-crash-triage` |
+| `0` | Success (or healthy / no issue detected; also `--status` and `--dry-run` on `sys-io-guard`) | All 7 CLIs |
+| `1` | Validation error (out-of-range flag, invalid env var, missing PID/path/iface/cgroup-root, `--json` without `--status`/`--dry-run` on `sys-io-guard`) or OS/runtime error | All 7 CLIs |
+| `2` | Command-line syntax / `argparse` error (unknown flag, missing required value, mutually exclusive flags) | All 7 CLIs |
+| `3` | Issue detected while `--exit-on-issue` is enabled (`verdict.is_issue == true`) | `sys-investigate`, `sys-mem-watch`, `sys-crash-triage`, `sys-net-watch`, `sys-systemd-watch` |
 | `4` | Lock busy / wait `--timeout` expired before acquiring exclusive disk lock | `sys-io-guard` |
 | *child rc* / `128+N` | When `sys-io-guard` executes a command, it transparently returns the child's exit code (or `128 + signal` if killed by a signal, e.g., `130` on `SIGINT`) | `sys-io-guard` |
 

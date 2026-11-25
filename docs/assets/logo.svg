@@ -111,13 +111,13 @@
     <text x="366" y="152" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="56" font-weight="800" letter-spacing="3.5">SYSADMIN-TOOLS</text>
 
     <rect x="366" y="170" width="764" height="2.2" fill="url(#hero-accent-line)"/>
-    <text x="366" y="210" fill="#cbd5e1" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="21" font-weight="500">Zero-Dependency Linux Telemetry, I/O Guard &amp; Crash Forensics</text>
+    <text x="366" y="210" fill="#cbd5e1" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="21" font-weight="500">Zero-Dependency Linux Telemetry, Guard, Network &amp; Forensics</text>
   </g>
 
   <g>
     <rect x="366" y="246" width="172" height="38" rx="7" fill="#0b1428" fill-opacity="0.92" stroke="#00e5ff" stroke-width="1.5"/>
     <circle cx="381" cy="265" r="3.5" fill="#00e5ff" filter="url(#hero-glow-soft)"/>
-    <text x="393" y="270" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600">5 STANDALONE CLIs</text>
+    <text x="393" y="270" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600">7 STANDALONE CLIs</text>
   </g>
   <g>
     <rect x="552" y="246" width="178" height="38" rx="7" fill="#0b1428" fill-opacity="0.92" stroke="#38bdf8" stroke-width="1.5"/>
@@ -132,8 +132,8 @@
   <g>
     <rect x="936" y="246" width="218" height="38" rx="7" fill="#0b1428" fill-opacity="0.92" stroke="#00ff9d" stroke-width="1.5"/>
     <circle cx="951" cy="265" r="3.5" fill="#00ff9d" filter="url(#hero-glow-soft)"/>
-    <text x="963" y="270" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600">v0.4.0 · 106 TESTS PASS</text>
+    <text x="963" y="270" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600">v0.5.0 · 166 TESTS PASS</text>
   </g>
 
-  <text x="366" y="318" fill="#94a3b8" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" letter-spacing="0.4">sys-investigate  ·  sys-io-guard  ·  sys-mem-watch  ·  sys-disk-hogs  ·  sys-crash-triage</text>
+  <text x="366" y="318" fill="#94a3b8" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.5" letter-spacing="0.2">sys-investigate  ·  sys-io-guard  ·  sys-mem-watch  ·  sys-disk-hogs  ·  sys-crash-triage  ·  sys-net-watch  ·  sys-systemd-watch</text>
 </svg>

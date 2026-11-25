@@ -93,23 +93,23 @@
     <text x="313" y="99" fill="#ffb800" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10" font-weight="700" letter-spacing="1.2">STAGE 02</text>
     <text x="313" y="116" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="800" letter-spacing="1.2">ISOLATE</text>
     <circle cx="529" cy="101" r="5" fill="#ffb800" filter="url(#wf-glow-soft)"/>
-    <text x="313" y="140" fill="#cbd5e1" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5">Pinpoint culprit PID, RAM, or hog</text>
+    <text x="313" y="140" fill="#cbd5e1" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5">Pinpoint PID, RAM, hog, net, unit</text>
     <rect x="311" y="150" width="224" height="62" rx="6" fill="#050b18" stroke="#00e5ff" stroke-width="1.0" stroke-opacity="0.5"/>
     <text x="319" y="172" fill="#5eead4" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.2" font-weight="600">$ sys-investigate --diagnose-pid</text>
-    <text x="319" y="188" fill="#5eead4" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.2" font-weight="600">$ sys-mem-watch</text>
-    <text x="319" y="204" fill="#5eead4" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.2" font-weight="600">$ sys-disk-hogs</text>
+    <text x="319" y="188" fill="#5eead4" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.2" font-weight="600">$ sys-mem-watch | sys-disk-hogs</text>
+    <text x="319" y="204" fill="#5eead4" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5" font-weight="600">$ sys-net-watch | sys-systemd-watch</text>
     <text x="313" y="228" fill="#94a3b8" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10" font-weight="700" letter-spacing="1.2">SIGNALS</text>
     <rect x="311" y="234" width="224" height="24" rx="5" fill="#050b18" stroke="#ffb800" stroke-width="0.9" stroke-opacity="0.45"/>
-    <text x="319" y="250" fill="#ffb800" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.4" font-weight="700">Mount / cgroup</text>
-    <text x="527" y="250" text-anchor="end" fill="#94a3b8" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.2">Per-PID I/O + wchan</text>
+    <text x="319" y="250" fill="#ffb800" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.4" font-weight="700">PID / mount</text>
+    <text x="527" y="250" text-anchor="end" fill="#94a3b8" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.2">wchan + cgroup</text>
     <rect x="311" y="264" width="224" height="24" rx="5" fill="#050b18" stroke="#ffb800" stroke-width="0.9" stroke-opacity="0.45"/>
-    <text x="319" y="280" fill="#ffb800" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.4" font-weight="700">OOM / PSI</text>
-    <text x="527" y="280" text-anchor="end" fill="#94a3b8" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.2">Swap &amp; thrash risk</text>
+    <text x="319" y="280" fill="#ffb800" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.4" font-weight="700">RAM / hogs</text>
+    <text x="527" y="280" text-anchor="end" fill="#94a3b8" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.2">OOM + one-FS scan</text>
     <rect x="311" y="294" width="224" height="24" rx="5" fill="#050b18" stroke="#ffb800" stroke-width="0.9" stroke-opacity="0.45"/>
-    <text x="319" y="310" fill="#ffb800" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.4" font-weight="700">Disk hogs</text>
-    <text x="527" y="310" text-anchor="end" fill="#94a3b8" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.2">One-FS cache scan</text>
+    <text x="319" y="310" fill="#ffb800" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.4" font-weight="700">Net / units</text>
+    <text x="527" y="310" text-anchor="end" fill="#94a3b8" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.2">Retrans + cgroup v2</text>
     <rect x="311" y="334" width="224" height="26" rx="5" fill="#ffb800" fill-opacity="0.14" stroke="#ffb800" stroke-width="1.1"/>
-    <text x="423.0" y="351" text-anchor="middle" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.5" font-weight="700">CULPRIT + MOUNT ISOLATED</text>
+    <text x="423.0" y="351" text-anchor="middle" fill="#f0f6fc" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.5" font-weight="700">CULPRIT + FAULT ISOLATED</text>
   </g>
   <g>
     <rect x="574" y="80" width="248" height="294" rx="10" fill="#0b1428" fill-opacity="0.92" stroke="#38bdf8" stroke-width="1.5"/>
@@ -177,7 +177,7 @@
 
   <!-- Bottom telemetry automation strip -->
   <rect x="24" y="388" width="1072" height="30" rx="6" fill="#0b1428" fill-opacity="0.92" stroke="#00e5ff" stroke-width="1.1" stroke-opacity="0.6"/>
-  <text x="560" y="407" text-anchor="middle" fill="#cbd5e1" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11.2">
-    <tspan fill="#00ff9d" font-weight="700">AUTOMATION:</tspan><tspan dx="10">--json for alerts  ·  --markdown for incident tickets  ·  --append-log for JSONL post-mortems  ·  zero third-party deps</tspan>
+  <text x="560" y="407" text-anchor="middle" fill="#cbd5e1" font-family="'Cascadia Code', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.6">
+    <tspan fill="#00ff9d" font-weight="700">AUTOMATION:</tspan><tspan dx="8">--json alerts · --markdown tickets · --append-log / --diff-log JSONL · systemd user timer</tspan>
   </text>
 </svg>

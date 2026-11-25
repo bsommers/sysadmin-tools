@@ -12,7 +12,7 @@ When a Linux workstation or build host stalls under heavy load, standard diagnos
 - **Symlinked developer tools create circular mount dependencies:** If `~/.local/bin/my-tool` symlinks to a repository on a secondary data SSD (`/datanapps`), diagnosing a stalled `/datanapps` hangs before Python even opens the script.
 - **Post-crash forensics are scattered and noisy:** After an unexpected reboot, evidence spans `journalctl --list-boots`, AMD FCH reset registers, ext4 orphan-inode recovery logs, NUL-byte gaps in `/var/log/syslog`, `/var/lib/systemd/pstore`, `/var/crash`, EDAC counters, and `/etc/default/kdump-tools` — buried beneath high-volume `audit` and Bluetooth log chatter.
 
-`sysadmin-tools` solves these failure modes with five self-contained, zero-dependency Python 3.10+ CLIs that read Linux kernel virtual filesystems directly, separate root-NVMe binaries and tmpfs locks from secondary storage, and emit deterministic, actionable verdicts.
+`sysadmin-tools` solves these failure modes with seven self-contained, zero-dependency Python 3.10+ CLIs that read Linux kernel virtual filesystems directly, separate root-NVMe binaries and tmpfs locks from secondary storage, and emit deterministic, actionable verdicts.
 
 ## 2. Empirical Origin Incident (2026-11-21)
 
@@ -35,9 +35,9 @@ When a Linux workstation or build host stalls under heavy load, standard diagnos
 Three overlapping `bash scripts/verify.sh` invocations spawned concurrently under a single automation session against `/datanapps/cargo-target/...` and a secondary worktree target directory. Together they launched ~33 `rustc` processes and 28+ concurrent `rust-lld` linkers writing large debug test binaries simultaneously, collapsing NVMe throughput to `48 MB/s` and stretching a multi-minute verification run past `1h 35m`. A secondary GPU workload (`sdxl_gen.py`) also stalled in `folio_wait_bit_common` waiting on `/datanapps`.
 
 From this single incident emerged the core toolkit architecture:
-1. **`sys-investigate`** to distinguish I/O writeback thrashing from productive compute or CPU spin loops in 2 seconds without touching secondary disks.
+1. **`sys-investigate`** to distinguish I/O writeback thrashing from productive compute or CPU spin loops in 2 seconds without touching secondary disks, plus `--diff-log` offline JSONL trend comparison.
 2. **`sys-io-guard`** to serialize concurrent builds per physical disk via tmpfs `flock` locks and cap `CARGO_BUILD_JOBS`.
-3. **`sys-mem-watch`**, **`sys-disk-hogs`**, and **`sys-crash-triage`** to close adjacent failure modes (memory leaks/OOM, unbounded Rust/Node/cache growth, and silent post-crash reboots) under the same zero-dependency reliability guarantees.
+3. **`sys-mem-watch`**, **`sys-disk-hogs`**, **`sys-crash-triage`**, **`sys-net-watch`**, and **`sys-systemd-watch`** to close adjacent failure modes (memory leaks/OOM, unbounded Rust/Node/cache growth, silent post-crash reboots, NIC/softnet/socket drops, and cgroup v2 unit pressure or crash loops) under the same zero-dependency reliability guarantees.
 
 ## 3. Six Non-Negotiable Engineering Tenets
 
@@ -48,7 +48,7 @@ Every tool in `sysadmin-tools` adheres to six strict invariants documented in [B
 2. **Self-Contained Standalone Executables on Root NVMe**
    Each CLI in `src/sysadmin_tools/*.py` has zero intra-package imports. `./scripts/install.sh` copies each script directly (`install -m 0755`) into `~/.local/bin` on the root NVMe — never symlinks pointing to secondary data disks.
 3. **Zero External Subprocesses on Hot Diagnostic Paths**
-   `sys-investigate`, `sys-mem-watch`, `sys-disk-hogs`, and `sys-io-guard` (device resolution and locking) read `/proc`, `/sys`, `os.scandir()`, and `fcntl.flock()` directly. No `top`, `iostat`, `vmstat`, `ps`, `lsblk`, `df`, `du`, `smartctl`, or `nvme` subprocesses. (`sys-crash-triage` uses bounded, timeout-guarded `journalctl` calls only for binary systemd journals, with a pure-file `--no-journalctl` mode.)
+   `sys-investigate`, `sys-mem-watch`, `sys-disk-hogs`, `sys-net-watch`, `sys-systemd-watch`, and `sys-io-guard` (device resolution and locking) read `/proc`, `/sys`, `os.scandir()`, and `fcntl.flock()` directly. No `top`, `iostat`, `vmstat`, `ps`, `lsblk`, `df`, `du`, `ss`, `netstat`, `ethtool`, `systemctl`, `smartctl`, or `nvme` subprocesses. (`sys-crash-triage` uses bounded, timeout-guarded `journalctl` calls only for binary systemd journals, with a pure-file `--no-journalctl` mode.)
 4. **Two-Snapshot Wall-Clock Delta Accuracy**
    Instantaneous CPU %, disk utilization, `w_await`, `aqu_sz`, swap paging, per-process `%CPU`, RSS/swap growth rates, disk MB/s, and process turnover are computed strictly across `[t0, t1]` measured with `time.monotonic()`.
 5. **Mount-Stall & Hang Resilience**

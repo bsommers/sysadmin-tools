@@ -5,8 +5,8 @@ Stdlib-only. Generates:
   - docs/assets/logo.svg + docs/assets/logo.png (1200x360 wide hero banner)
   - assets/logo.svg + assets/logo.png (512x512 square repo/app icon)
   - docs/assets/icon.svg (exact copy of assets/logo.svg)
-  - docs/assets/icons/icon-{investigate,io-guard,mem-watch,disk-hogs,crash-triage}.svg (64x64)
-  - docs/assets/examples/architecture-overview.svg (1120x440)
+  - docs/assets/icons/icon-{investigate,io-guard,mem-watch,disk-hogs,crash-triage,net-watch,systemd-watch}.svg (64x64)
+  - docs/assets/examples/architecture-overview.svg (1120x520)
   - docs/assets/examples/incident-triage-workflow.svg (1120x440)
 """
 
@@ -206,10 +206,10 @@ def render_hero_banner() -> str:
     )
 
     pills = [
-        (366, 172, "5 STANDALONE CLIs", CYAN),
+        (366, 172, "7 STANDALONE CLIs", CYAN),
         (552, 178, "PURE /proc + /sys", SKY),
         (744, 178, "ZERO RUNTIME DEPS", EMERALD),
-        (936, 218, "v0.4.0 · 106 TESTS PASS", EMERALD),
+        (936, 218, "v0.5.0 · 166 TESTS PASS", EMERALD),
     ]
     pill_svg = []
     for px, pw, label, accent in pills:
@@ -258,12 +258,12 @@ def render_hero_banner() -> str:
     <text x="366" y="152" fill="{TEXT_HEAD}" font-family="{FONT_MONO}" font-size="56" font-weight="800" letter-spacing="3.5">SYSADMIN-TOOLS</text>
 
     <rect x="366" y="170" width="764" height="2.2" fill="url(#hero-accent-line)"/>
-    <text x="366" y="210" fill="{TEXT_BODY}" font-family="{FONT_SANS}" font-size="21" font-weight="500">Zero-Dependency Linux Telemetry, I/O Guard &amp; Crash Forensics</text>
+    <text x="366" y="210" fill="{TEXT_BODY}" font-family="{FONT_SANS}" font-size="21" font-weight="500">Zero-Dependency Linux Telemetry, Guard, Network &amp; Forensics</text>
   </g>
 
 {chr(10).join(pill_svg)}
 
-  <text x="366" y="318" fill="{TEXT_MUTED}" font-family="{FONT_MONO}" font-size="12.5" letter-spacing="0.4">sys-investigate  ·  sys-io-guard  ·  sys-mem-watch  ·  sys-disk-hogs  ·  sys-crash-triage</text>
+  <text x="366" y="318" fill="{TEXT_MUTED}" font-family="{FONT_MONO}" font-size="10.5" letter-spacing="0.2">sys-investigate  ·  sys-io-guard  ·  sys-mem-watch  ·  sys-disk-hogs  ·  sys-crash-triage  ·  sys-net-watch  ·  sys-systemd-watch</text>
 </svg>
 """
 
@@ -339,23 +339,52 @@ def render_tool_icons() -> dict[str, str]:
     <line x1="36" y1="44" x2="50" y2="44" stroke="{MAGENTA}" stroke-opacity="0.85"/>
   </g>"""
 
+    # 6. icon-net-watch: network topology nodes + bidirectional packet arrows + pulse dot (#00e5ff + #38bdf8 + #00ff9d)
+    net_watch = f"""  <g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="20" y1="20" x2="44" y2="20" stroke="{SKY}" stroke-opacity="0.75"/>
+    <line x1="20" y1="44" x2="44" y2="44" stroke="{SKY}" stroke-opacity="0.75"/>
+    <line x1="18" y1="22" x2="18" y2="42" stroke="{CYAN}" stroke-opacity="0.7"/>
+    <line x1="46" y1="22" x2="46" y2="42" stroke="{CYAN}" stroke-opacity="0.7"/>
+    <path d="M 24 28 L 40 28 M 36 24 L 40 28 L 36 32" stroke="{CYAN}" filter="url(#ic-net-watch-glow)"/>
+    <path d="M 40 36 L 24 36 M 28 32 L 24 36 L 28 40" stroke="{EMERALD}" filter="url(#ic-net-watch-glow)"/>
+    <circle cx="18" cy="20" r="3.5" fill="{ICON_BG}" stroke="{CYAN}"/>
+    <circle cx="46" cy="20" r="3.5" fill="{ICON_BG}" stroke="{CYAN}"/>
+    <circle cx="18" cy="44" r="3.5" fill="{ICON_BG}" stroke="{SKY}"/>
+    <circle cx="46" cy="44" r="3.5" fill="{ICON_BG}" stroke="{SKY}"/>
+    <circle cx="32" cy="14" r="2.2" fill="{EMERALD}" stroke="none" filter="url(#ic-net-watch-glow)"/>
+  </g>"""
+
+    # 7. icon-systemd-watch: nested cgroup v2 hierarchy nodes + unit pressure bar (#00e5ff + #38bdf8 + #ffb800)
+    systemd_watch = f"""  <g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="24" y="12" width="16" height="9" rx="2" fill="{PANEL_FILL}" stroke="{CYAN}"/>
+    <path d="M 32 21 L 32 27 M 19 27 L 45 27 M 19 27 L 19 32 M 45 27 L 45 32" stroke="{SKY}"/>
+    <rect x="12" y="32" width="14" height="9" rx="2" fill="{ICON_BG}" stroke="{CYAN}"/>
+    <rect x="38" y="32" width="14" height="9" rx="2" fill="{ICON_BG}" stroke="{AMBER}"/>
+    <rect x="13" y="47" width="38" height="5" rx="2" fill="{PANEL_FILL}" stroke="{SKY}" stroke-width="1.5"/>
+    <rect x="14.5" y="48.5" width="24" height="2" rx="1" fill="{AMBER}" stroke="none" filter="url(#ic-systemd-watch-glow)"/>
+  </g>"""
+
     return {
         "icon-investigate.svg": render_tool_icon("investigate", "sys-investigate icon", investigate),
         "icon-io-guard.svg": render_tool_icon("io-guard", "sys-io-guard icon", io_guard),
         "icon-mem-watch.svg": render_tool_icon("mem-watch", "sys-mem-watch icon", mem_watch),
         "icon-disk-hogs.svg": render_tool_icon("disk-hogs", "sys-disk-hogs icon", disk_hogs),
         "icon-crash-triage.svg": render_tool_icon("crash-triage", "sys-crash-triage icon", crash_triage),
+        "icon-net-watch.svg": render_tool_icon("net-watch", "sys-net-watch icon", net_watch),
+        "icon-systemd-watch.svg": render_tool_icon("systemd-watch", "sys-systemd-watch icon", systemd_watch),
     }
 
 
 def render_architecture_overview() -> str:
-    """1120x440 3-column HUD architecture diagram."""
+    """1120x520 3-column HUD architecture diagram."""
     cli_items = [
-        ("sys-investigate", "Stall, I/O, PSI, GPU, PID triage", EMERALD),
+        ("sys-investigate", "Stall, I/O, PSI, GPU, PID, diff", EMERALD),
         ("sys-io-guard", "Per-disk flock & build job cap", SKY),
         ("sys-mem-watch", "RAM, swap, PSI & OOM pressure", AMBER),
         ("sys-disk-hogs", "One-FS mount & cache scanner", EMERALD),
         ("sys-crash-triage", "Reboot, panic, MCE & GPU logs", MAGENTA),
+        ("sys-net-watch", "NIC, TCP/UDP, SNMP & softnet", CYAN),
+        ("sys-systemd-watch", "Cgroup v2 pressure & churn", SKY),
     ]
     kernel_items = [
         ("/proc/* + PSI", "stat, diskstats, meminfo, pressure/{io,mem}", CYAN),
@@ -363,12 +392,15 @@ def render_architecture_overview() -> str:
         ("fcntl.flock on tmpfs", "Per-device RAM lock (/run or /tmp)", EMERALD),
         ("os.scandir one-FS", "Same st_dev walk; skips stalled mounts", AMBER),
         ("Bounded journalctl / pstore", "Cold-path kdump & crash logs w/ timeout", MAGENTA),
+        ("/proc/net/*", "dev, tcp/6, udp/6, snmp, softnet_stat", CYAN),
+        ("/sys/fs/cgroup + journal", "cgroup v2 pressure, churn, bursts", SKY),
     ]
     output_items = [
         ("Text", "Color-free terminal summary", CYAN),
         ("--markdown", "Paste-ready incident report", SKY),
         ("--json", "Stable structured schema", EMERALD),
         ("--append-log", "Append-only JSONL log", TEXT_MONO),
+        ("--diff-log", "JSONL trend diff", SKY),
     ]
     exit_items = [
         ("0", "OK", "Healthy / succeeded", EMERALD),
@@ -380,22 +412,22 @@ def render_architecture_overview() -> str:
 
     cli_cards = []
     for idx, (cmd, desc, accent) in enumerate(cli_items):
-        cy = 138 + idx * 54
+        cy = 134 + idx * 50
         cli_cards.append(
-            f'    <rect x="42" y="{cy}" width="276" height="46" rx="7" fill="{TERM_FILL}" stroke="{accent}" stroke-width="1.2" stroke-opacity="0.75"/>\n'
-            f'    <circle cx="56" cy="{cy + 16}" r="3.5" fill="{accent}"/>\n'
-            f'    <text x="68" y="{cy + 20}" fill="{TEXT_HEAD}" font-family="{FONT_MONO}" font-size="13" font-weight="700">{esc(cmd)}</text>\n'
-            f'    <text x="54" y="{cy + 37}" fill="{TEXT_MUTED}" font-family="{FONT_SANS}" font-size="11.5">{esc(desc)}</text>'
+            f'    <rect x="42" y="{cy}" width="276" height="42" rx="7" fill="{TERM_FILL}" stroke="{accent}" stroke-width="1.2" stroke-opacity="0.75"/>\n'
+            f'    <circle cx="56" cy="{cy + 14}" r="3.5" fill="{accent}"/>\n'
+            f'    <text x="68" y="{cy + 18}" fill="{TEXT_HEAD}" font-family="{FONT_MONO}" font-size="13" font-weight="700">{esc(cmd)}</text>\n'
+            f'    <text x="54" y="{cy + 34}" fill="{TEXT_MUTED}" font-family="{FONT_SANS}" font-size="11.2">{esc(desc)}</text>'
         )
 
     kernel_cards = []
     for idx, (src, desc, accent) in enumerate(kernel_items):
-        cy = 138 + idx * 54
+        cy = 134 + idx * 50
         kernel_cards.append(
-            f'    <rect x="388" y="{cy}" width="344" height="46" rx="7" fill="{TERM_FILL}" stroke="{accent}" stroke-width="1.2" stroke-opacity="0.75"/>\n'
-            f'    <rect x="388" y="{cy + 8}" width="3.5" height="30" rx="1.5" fill="{accent}"/>\n'
-            f'    <text x="403" y="{cy + 20}" fill="{TEXT_MONO}" font-family="{FONT_MONO}" font-size="12.5" font-weight="700">{esc(src)}</text>\n'
-            f'    <text x="403" y="{cy + 37}" fill="{TEXT_MUTED}" font-family="{FONT_SANS}" font-size="11.5">{esc(desc)}</text>'
+            f'    <rect x="388" y="{cy}" width="344" height="42" rx="7" fill="{TERM_FILL}" stroke="{accent}" stroke-width="1.2" stroke-opacity="0.75"/>\n'
+            f'    <rect x="388" y="{cy + 8}" width="3.5" height="26" rx="1.5" fill="{accent}"/>\n'
+            f'    <text x="403" y="{cy + 18}" fill="{TEXT_MONO}" font-family="{FONT_MONO}" font-size="12.5" font-weight="700">{esc(src)}</text>\n'
+            f'    <text x="403" y="{cy + 34}" fill="{TEXT_MUTED}" font-family="{FONT_SANS}" font-size="11.2">{esc(desc)}</text>'
         )
 
     output_rows = []
@@ -408,7 +440,7 @@ def render_architecture_overview() -> str:
 
     exit_rows = []
     for idx, (code, tag, desc, accent) in enumerate(exit_items):
-        ry = 304 + idx * 21
+        ry = 330 + idx * 21
         exit_rows.append(
             f'    <rect x="812" y="{ry - 11}" width="18" height="15" rx="3" fill="{accent}" fill-opacity="0.2" stroke="{accent}" stroke-width="1"/>\n'
             f'    <text x="821" y="{ry}" text-anchor="middle" fill="{accent}" font-family="{FONT_MONO}" font-size="10.5" font-weight="700">{code}</text>\n'
@@ -419,21 +451,21 @@ def render_architecture_overview() -> str:
     arrows_12 = "\n".join(
         f'    <line x1="332" y1="{y}" x2="365" y2="{y}" stroke="{CYAN}" stroke-width="1.8" stroke-opacity="0.85"/>\n'
         f'    <polygon points="365,{y - 4.5} 374,{y} 365,{y + 4.5}" fill="{CYAN}"/>'
-        for y in (161, 215, 269, 323, 377)
+        for y in (155 + idx * 50 for idx in range(7))
     )
     arrows_23 = "\n".join(
         f'    <line x1="746" y1="{y}" x2="779" y2="{y}" stroke="{CYAN}" stroke-width="1.8" stroke-opacity="0.85"/>\n'
         f'    <polygon points="779,{y - 4.5} 788,{y} 779,{y + 4.5}" fill="{CYAN}"/>'
-        for y in (198, 334)
+        for y in (218, 384)
     )
 
-    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 440" width="1120" height="440" role="img" aria-label="sysadmin-tools architecture overview">
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 520" width="1120" height="520" role="img" aria-label="sysadmin-tools architecture overview">
 {neon_defs("arch", glow_cx="50%", glow_cy="48%", glow_r="56%")}
-  <rect width="1120" height="440" fill="url(#arch-bg)"/>
-  <rect width="1120" height="440" fill="url(#arch-grid-major)"/>
-  <rect width="1120" height="440" fill="url(#arch-core-glow)"/>
-  <rect x="10" y="10" width="1100" height="420" rx="12" fill="none" stroke="{CYAN}" stroke-width="1.5" stroke-opacity="0.45"/>
-{hud_corners(10, 10, 1100, 420, arm=18, color=CYAN, sw=2.0)}
+  <rect width="1120" height="520" fill="url(#arch-bg)"/>
+  <rect width="1120" height="520" fill="url(#arch-grid-major)"/>
+  <rect width="1120" height="520" fill="url(#arch-core-glow)"/>
+  <rect x="10" y="10" width="1100" height="500" rx="12" fill="none" stroke="{CYAN}" stroke-width="1.5" stroke-opacity="0.45"/>
+{hud_corners(10, 10, 1100, 500, arm=18, color=CYAN, sw=2.0)}
 
   <!-- Header -->
   <circle cx="34" cy="37" r="4.5" fill="{EMERALD}" filter="url(#arch-glow-soft)"/>
@@ -443,7 +475,7 @@ def render_architecture_overview() -> str:
 
   <!-- Column 1: Root-NVMe CLIs -->
   <g>
-    <rect x="28" y="76" width="304" height="340" rx="10" fill="{PANEL_FILL}" fill-opacity="0.92" stroke="{CYAN}" stroke-width="1.5"/>
+    <rect x="28" y="76" width="304" height="420" rx="10" fill="{PANEL_FILL}" fill-opacity="0.92" stroke="{CYAN}" stroke-width="1.5"/>
     <path d="M 28 86 Q 28 76 38 76 L 322 76 Q 332 76 332 86 L 332 108 L 28 108 Z" fill="{PLASMA}" fill-opacity="0.22"/>
     <line x1="28" y1="108" x2="332" y2="108" stroke="{CYAN}" stroke-width="1" stroke-opacity="0.5"/>
     <text x="42" y="96" fill="{CYAN}" font-family="{FONT_MONO}" font-size="12" font-weight="700" letter-spacing="0.8">01 · ROOT-NVME CLIs (~/.local/bin/)</text>
@@ -458,7 +490,7 @@ def render_architecture_overview() -> str:
 
   <!-- Column 2: Kernel Boundary -->
   <g>
-    <rect x="374" y="76" width="372" height="340" rx="10" fill="{PANEL_FILL}" fill-opacity="0.92" stroke="{CYAN}" stroke-width="1.5"/>
+    <rect x="374" y="76" width="372" height="420" rx="10" fill="{PANEL_FILL}" fill-opacity="0.92" stroke="{CYAN}" stroke-width="1.5"/>
     <path d="M 374 86 Q 374 76 384 76 L 736 76 Q 746 76 746 86 L 746 108 L 374 108 Z" fill="{PLASMA}" fill-opacity="0.22"/>
     <line x1="374" y1="108" x2="746" y2="108" stroke="{CYAN}" stroke-width="1" stroke-opacity="0.5"/>
     <text x="388" y="96" fill="{CYAN}" font-family="{FONT_MONO}" font-size="12" font-weight="700" letter-spacing="0.8">02 · ZERO-SUBPROCESS KERNEL BOUNDARY</text>
@@ -473,22 +505,22 @@ def render_architecture_overview() -> str:
 
   <!-- Column 3: Deterministic Outputs & Exit Codes -->
   <g>
-    <rect x="788" y="76" width="304" height="340" rx="10" fill="{PANEL_FILL}" fill-opacity="0.92" stroke="{CYAN}" stroke-width="1.5"/>
+    <rect x="788" y="76" width="304" height="420" rx="10" fill="{PANEL_FILL}" fill-opacity="0.92" stroke="{CYAN}" stroke-width="1.5"/>
     <path d="M 788 86 Q 788 76 798 76 L 1082 76 Q 1092 76 1092 86 L 1092 108 L 788 108 Z" fill="{PLASMA}" fill-opacity="0.22"/>
     <line x1="788" y1="108" x2="1092" y2="108" stroke="{CYAN}" stroke-width="1" stroke-opacity="0.5"/>
     <text x="802" y="96" fill="{CYAN}" font-family="{FONT_MONO}" font-size="12" font-weight="700" letter-spacing="0.8">03 · OUTPUTS &amp; EXIT CONTRACT</text>
     <text x="802" y="125" fill="{TEXT_MUTED}" font-family="{FONT_SANS}" font-size="11">Deterministic formats &amp; automation exit codes</text>
 
     <!-- Outputs sub-panel -->
-    <rect x="802" y="138" width="276" height="118" rx="7" fill="{TERM_FILL}" stroke="{SKY}" stroke-width="1.2" stroke-opacity="0.7"/>
+    <rect x="802" y="138" width="276" height="140" rx="7" fill="{TERM_FILL}" stroke="{SKY}" stroke-width="1.2" stroke-opacity="0.7"/>
     <text x="814" y="156" fill="{SKY}" font-family="{FONT_MONO}" font-size="11" font-weight="700" letter-spacing="1.0">OUTPUT FORMATS</text>
     <line x1="814" y1="162" x2="1066" y2="162" stroke="{SKY}" stroke-width="0.8" stroke-opacity="0.3"/>
 {chr(10).join(output_rows)}
 
     <!-- Exit codes sub-panel -->
-    <rect x="802" y="266" width="276" height="136" rx="7" fill="{TERM_FILL}" stroke="{CYAN}" stroke-width="1.2" stroke-opacity="0.7"/>
-    <text x="814" y="284" fill="{CYAN}" font-family="{FONT_MONO}" font-size="11" font-weight="700" letter-spacing="1.0">EXIT CODES</text>
-    <line x1="814" y1="290" x2="1066" y2="290" stroke="{CYAN}" stroke-width="0.8" stroke-opacity="0.3"/>
+    <rect x="802" y="292" width="276" height="148" rx="7" fill="{TERM_FILL}" stroke="{CYAN}" stroke-width="1.2" stroke-opacity="0.7"/>
+    <text x="814" y="310" fill="{CYAN}" font-family="{FONT_MONO}" font-size="11" font-weight="700" letter-spacing="1.0">EXIT CODES</text>
+    <line x1="814" y1="316" x2="1066" y2="316" stroke="{CYAN}" stroke-width="0.8" stroke-opacity="0.3"/>
 {chr(10).join(exit_rows)}
   </g>
 </svg>
@@ -519,19 +551,19 @@ def render_incident_workflow() -> str:
             "num": "STAGE 02",
             "title": "ISOLATE",
             "accent": AMBER,
-            "tagline": "Pinpoint culprit PID, RAM, or hog",
+            "tagline": "Pinpoint PID, RAM, hog, net, unit",
             "cmds": [
                 "$ sys-investigate --diagnose-pid",
-                "$ sys-mem-watch",
-                "$ sys-disk-hogs",
+                "$ sys-mem-watch | sys-disk-hogs",
+                "$ sys-net-watch | sys-systemd-watch",
             ],
             "sec_label": "SIGNALS",
             "metrics": [
-                ("Mount / cgroup", "Per-PID I/O + wchan"),
-                ("OOM / PSI", "Swap & thrash risk"),
-                ("Disk hogs", "One-FS cache scan"),
+                ("PID / mount", "wchan + cgroup"),
+                ("RAM / hogs", "OOM + one-FS scan"),
+                ("Net / units", "Retrans + cgroup v2"),
             ],
-            "footer": "CULPRIT + MOUNT ISOLATED",
+            "footer": "CULPRIT + FAULT ISOLATED",
         },
         {
             "num": "STAGE 03",
@@ -588,9 +620,10 @@ def render_incident_workflow() -> str:
         cmd_pitch = 16 if len(st["cmds"]) == 3 else 18
         for c_idx, line in enumerate(st["cmds"]):
             indent = 12 if line.startswith("  ") else 0
+            fsize = "9.5" if len(line.lstrip()) > 32 else "10.2"
             cmd_lines.append(
                 f'    <text x="{x + 20 + indent}" y="{base_cmd_y + c_idx * cmd_pitch}" fill="{TEXT_MONO}" '
-                f'font-family="{FONT_MONO}" font-size="10.2" font-weight="600">{esc(line.lstrip())}</text>'
+                f'font-family="{FONT_MONO}" font-size="{fsize}" font-weight="600">{esc(line.lstrip())}</text>'
             )
 
         # Metric / signal rows
@@ -654,8 +687,8 @@ def render_incident_workflow() -> str:
 
   <!-- Bottom telemetry automation strip -->
   <rect x="24" y="388" width="1072" height="30" rx="6" fill="{PANEL_FILL}" fill-opacity="0.92" stroke="{CYAN}" stroke-width="1.1" stroke-opacity="0.6"/>
-  <text x="560" y="407" text-anchor="middle" fill="{TEXT_BODY}" font-family="{FONT_MONO}" font-size="11.2">
-    <tspan fill="{EMERALD}" font-weight="700">AUTOMATION:</tspan><tspan dx="10">--json for alerts  ·  --markdown for incident tickets  ·  --append-log for JSONL post-mortems  ·  zero third-party deps</tspan>
+  <text x="560" y="407" text-anchor="middle" fill="{TEXT_BODY}" font-family="{FONT_MONO}" font-size="10.6">
+    <tspan fill="{EMERALD}" font-weight="700">AUTOMATION:</tspan><tspan dx="8">--json alerts · --markdown tickets · --append-log / --diff-log JSONL · systemd user timer</tspan>
   </text>
 </svg>
 """
@@ -722,12 +755,12 @@ def main() -> int:
     write_svg(docs_logo_svg, hero_svg)
     rasterize_svg(docs_logo_svg, docs_logo_png, 1200, 360)
 
-    # 3. 5 Cohesive tool icons (64x64)
+    # 3. 7 Cohesive tool icons (64x64)
     icons_dir = ROOT / "docs" / "assets" / "icons"
     for filename, svg_content in render_tool_icons().items():
         write_svg(icons_dir / filename, svg_content)
 
-    # 4. 2 Visual showcase graphics (1120x440)
+    # 4. 2 Visual showcase graphics (1120x520 architecture, 1120x440 workflow)
     examples_dir = ROOT / "docs" / "assets" / "examples"
     write_svg(examples_dir / "architecture-overview.svg", render_architecture_overview())
     write_svg(examples_dir / "incident-triage-workflow.svg", render_incident_workflow())

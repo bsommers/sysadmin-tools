@@ -113,62 +113,67 @@ sys-crash-triage --markdown --append-log /var/tmp/crash-triage.jsonl --exit-on-i
 
 ---
 
-## Recipe 6: Set Up a User `systemd` Timer + JSONL Telemetry Log
+## Recipe 6: Set Up a User `systemd` Timer + JSONL Telemetry & `--diff-log`
 
-Record periodic diagnostic snapshots on root storage so you always have pre-stall evidence when a spike occurs.
+Record periodic diagnostic snapshots on root storage so you always have pre-stall evidence when a spike occurs — and diff trends offline with `sys-investigate --diff-log`.
 
-Create `~/.config/systemd/user/sys-investigate-log.service`:
-
-```ini
-[Unit]
-Description=Periodic sys-investigate JSONL snapshot
-
-[Service]
-Type=oneshot
-ExecStart=%h/.local/bin/sys-investigate --interval 2 --no-statvfs --append-log %h/.local/state/sysadmin-tools/investigate.jsonl
-```
-
-Create `~/.config/systemd/user/sys-investigate-log.timer`:
-
-```ini
-[Unit]
-Description=Run sys-investigate every 5 minutes
-
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=5min
-AccuracySec=15s
-
-[Install]
-WantedBy=timers.target
-```
-
-Enable the timer and query recorded issues:
+Install the packaged templates from [`packaging/systemd/`](../packaging/systemd/README.md):
 
 ```bash
+mkdir -p ~/.config/systemd/user
+cp packaging/systemd/sys-investigate-sampler.service ~/.config/systemd/user/
+cp packaging/systemd/sys-investigate-sampler.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now sys-investigate-log.timer
+systemctl --user enable --now sys-investigate-sampler.timer
+systemctl --user list-timers sys-investigate-sampler.timer
+```
 
+Query and trend-diff recorded telemetry:
+
+```bash
 # List only logged incidents where verdict.is_issue == true
 jq -c 'select(.verdict.is_issue) | {ts: .timestamp, bottleneck: .verdict.bottleneck, prod: .verdict.productivity, reasons: .verdict.reasons}' \
   ~/.local/state/sysadmin-tools/investigate.jsonl
+
+# Summarize trends across the log (early half vs late half, or last N vs prior N)
+sys-investigate --diff-log ~/.local/state/sysadmin-tools/investigate.jsonl
+sys-investigate --diff-log ~/.local/state/sysadmin-tools/investigate.jsonl --diff-window 5 --exit-on-issue
+
+# Compare an incident log against a healthy baseline log
+sys-investigate --diff-log after.jsonl --diff-baseline before.jsonl --json | jq '.verdict'
 ```
 
 ---
 
-## Recipe 7: Run Local CI Verification (`scripts/verify.sh`)
+## Recipe 7: Triage Network Drops & Systemd Cgroup Pressure
 
-Run the full zero-dependency verification suite locally before committing or pushing changes:
+Isolate NIC/softnet/socket issues or misbehaving systemd services without spawning `ss`, `ethtool`, `systemctl`, or `journalctl`:
 
 ```bash
-# Full 3-stage verification: syntax (py_compile) + unit (91 tests) + smoke (15 tests) = 106 tests
+# 1. Inspect NIC link errors, packet drops, TCP retransmits, CLOSE_WAIT growth, and softnet drops
+sys-net-watch --interval 1 --samples 2 --top 8
+sys-net-watch --iface eno1 --exit-on-issue --json | jq '.verdict'
+
+# 2. Inspect systemd cgroup v2 memory/OOM pressure, CPU throttling, crash-loops, and journal bursts
+sys-systemd-watch --interval 1 --samples 2 --top 10
+sys-systemd-watch --unit docker --exit-on-issue --markdown
+```
+
+---
+
+## Recipe 8: Run Local CI Verification (`scripts/verify.sh` & `.github/workflows/ci.yml`)
+
+Run the same zero-dependency verification suite locally that runs in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml):
+
+```bash
+# Full 3-stage verification: syntax (py_compile) + unit (143 tests) + smoke (23 tests) = 166 tests
 ./scripts/verify.sh
 
 # Fast inner loop (syntax + unit tests only)
 ./scripts/verify.sh --quick
 
 # Filter tests by pattern (unittest -k)
-./scripts/verify.sh --tier unit --match crash_triage
+./scripts/verify.sh --tier unit --match net_watch
 
 # Inspect generated verification report and verify installer dry-run
 cat target/verify/report.md
